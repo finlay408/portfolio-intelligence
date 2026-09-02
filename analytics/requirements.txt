@@ -1,0 +1,8 @@
+# Pinned to majors that are stable together. The nightly job is the only
+# consumer, so upgrades are low-risk and can be taken deliberately.
+numpy>=1.26,<3
+pandas>=2.2,<3
+scipy>=1.13,<2
+statsmodels>=0.14,<1
+psycopg[binary]>=3.2,<4
+requests>=2.32,<3

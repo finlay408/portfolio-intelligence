@@ -1,0 +1,82 @@
+# Heavy analytics jobs (CLAUDE.md §4.2, §8).
+#
+# These run Python directly and write to Postgres over the connection string.
+# They never round-trip through Vercel: a full risk rebuild does not fit inside
+# a Hobby-tier serverless timeout, and the web app is not the right place for a
+# statsmodels regression.
+
+name: analytics
+
+on:
+  schedule:
+    - cron: '0 1 * * *' # nightly risk pack
+    - cron: '0 6 * * *' # FRED macro refresh
+    - cron: '0 6 1 * *' # monthly Ken French factor pull
+    - cron: '0 2 * * 0' # weekly integrity check
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which job to run
+        required: true
+        default: analytics
+        type: choice
+        options: [analytics, macro, factors, integrity]
+
+concurrency:
+  group: analytics-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  python:
+    if: >-
+      github.event.schedule == '0 1 * * *' ||
+      github.event.schedule == '0 6 * * *' ||
+      github.event.schedule == '0 6 1 * *' ||
+      inputs.job == 'analytics' || inputs.job == 'macro' || inputs.job == 'factors'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r analytics/requirements.txt
+
+      - name: Nightly risk pack
+        if: github.event.schedule == '0 1 * * *' || inputs.job == 'analytics'
+        run: python analytics/run_nightly.py --job=analytics
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Macro refresh
+        if: github.event.schedule == '0 6 * * *' || inputs.job == 'macro'
+        run: python analytics/run_nightly.py --job=macro
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+
+      - name: Factor refresh
+        if: github.event.schedule == '0 6 1 * *' || inputs.job == 'factors'
+        run: python analytics/run_nightly.py --job=factors
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  integrity:
+    # Not optional. This is what catches silent drift between the ledger and the
+    # cache, and a failure here means the cached numbers can no longer be
+    # trusted — so it fails the workflow loudly rather than warning.
+    if: github.event.schedule == '0 2 * * 0' || inputs.job == 'integrity'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Recompute from inception and diff against the cache
+        run: npm run integrity-check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

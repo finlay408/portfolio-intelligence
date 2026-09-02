@@ -1,0 +1,76 @@
+@import 'tailwindcss';
+
+/**
+ * Restraint in colour (CLAUDE.md §12).
+ *
+ * The palette is deliberately almost monochrome. Green and red appear only for
+ * direction — a gain, a loss, an up day. Because nothing else is coloured, the
+ * colour that does appear actually means something. Amber is reserved for one
+ * job: data that is stale, degraded, or awaiting confirmation.
+ */
+@theme {
+  --color-canvas: oklch(21% 0.006 250);
+  --color-surface: oklch(24.5% 0.007 250);
+  --color-surface-2: oklch(28% 0.008 250);
+  --color-line: oklch(33% 0.009 250);
+  --color-line-strong: oklch(42% 0.011 250);
+
+  --color-ink: oklch(94% 0.004 250);
+  --color-ink-2: oklch(76% 0.008 250);
+  --color-muted: oklch(60% 0.01 250);
+
+  --color-up: oklch(72% 0.14 155);
+  --color-down: oklch(66% 0.17 25);
+  --color-warn: oklch(78% 0.12 78);
+  --color-accent: oklch(72% 0.09 235);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  @theme {
+    --color-canvas: oklch(98.5% 0.002 250);
+    --color-surface: oklch(100% 0 0);
+    --color-surface-2: oklch(96.5% 0.003 250);
+    --color-line: oklch(90% 0.005 250);
+    --color-line-strong: oklch(82% 0.007 250);
+
+    --color-ink: oklch(24% 0.01 250);
+    --color-ink-2: oklch(42% 0.01 250);
+    --color-muted: oklch(56% 0.011 250);
+
+    --color-up: oklch(52% 0.14 155);
+    --color-down: oklch(53% 0.19 25);
+    --color-warn: oklch(58% 0.13 70);
+    --color-accent: oklch(50% 0.11 245);
+  }
+}
+
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'tnum' 1, 'cv05' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every figure in a table is a number to be compared with the one above it. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: color-mix(in oklch, var(--color-accent) 30%, transparent);
+}
+
+/* Thin, unobtrusive scrollbars — the data should be the only thing with weight. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}

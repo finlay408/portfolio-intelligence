@@ -1,0 +1,147 @@
+# Light market-data jobs (CLAUDE.md §4.2, §8).
+#
+# GitHub Actions rather than Vercel Cron: the Hobby tier restricts both the
+# number of cron jobs and their frequency, and its function timeout is too short
+# for the nightly rebuild. Actions are free at this scale, support minute-level
+# schedules, and run Python natively. (Verify Vercel's current limits before
+# relying on them either way.)
+#
+# Quote refreshes call the protected Next.js route with a shared secret. Bar and
+# corporate-action ingestion runs the CLI directly against Postgres, because it
+# writes hundreds of rows and has no business going through a serverless
+# function.
+#
+# All times are UTC. British Summer Time shifts the London session an hour
+# earlier in UTC terms, so the UK window below is wide enough to cover both.
+#
+# Note: GitHub Actions does not support YAML anchors, so the env blocks are
+# repeated rather than shared.
+
+name: market-data
+
+on:
+  schedule:
+    - cron: '*/5 13-21 * * 1-5' # US session quotes
+    - cron: '*/5 7-17 * * 1-5' # UK session quotes
+    - cron: '30 22 * * 1-5' # end-of-day bars, FX, recompute
+    - cron: '0 23 * * 1-5' # corporate action detection
+    - cron: '0 8 * * *' # auto-invest
+    - cron: '0 6 * * 1' # weekly earnings calendar
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Which job to run
+        required: true
+        default: eod-bars
+        type: choice
+        options: [quotes-us, quotes-uk, eod-bars, corp-actions, auto-invest, earnings]
+
+concurrency:
+  group: market-data-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: true
+
+jobs:
+  quotes:
+    if: >-
+      github.event.schedule == '*/5 13-21 * * 1-5' ||
+      github.event.schedule == '*/5 7-17 * * 1-5' ||
+      inputs.job == 'quotes-us' || inputs.job == 'quotes-uk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Pick market
+        id: market
+        run: |
+          if [ "${{ github.event.schedule }}" = "*/5 13-21 * * 1-5" ] || [ "${{ inputs.job }}" = "quotes-us" ]; then
+            echo "market=us" >> "$GITHUB_OUTPUT"
+          else
+            echo "market=uk" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refresh quotes
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o /tmp/body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/quotes?market=${{ steps.market.outputs.market }}")
+          cat /tmp/body.json
+          test "$status" = "200"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  eod:
+    if: github.event.schedule == '30 22 * * 1-5' || inputs.job == 'eod-bars'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Ingest daily bars and FX
+        run: npm run backfill
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      # The cache is rebuilt every evening so the analytics job that follows at
+      # 01:00 reads current snapshots.
+      - name: Recompute cached snapshots
+        run: npm run recompute -- --from=inception
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  corp-actions:
+    if: github.event.schedule == '0 23 * * 1-5' || inputs.job == 'corp-actions'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Detect, validate and queue
+        run: npm run corp-actions
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+
+  auto-invest:
+    if: github.event.schedule == '0 8 * * *' || inputs.job == 'auto-invest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Fire due rules
+        run: npm run auto-invest
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  earnings:
+    if: github.event.schedule == '0 6 * * 1' || inputs.job == 'earnings'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Refresh the earnings calendar
+        run: npm run earnings
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
