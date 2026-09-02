@@ -18,3 +18,4 @@ coverage/
 .env.local
 .scratch/
 .claude/launch.json
+.env.pglite-offline.bak
