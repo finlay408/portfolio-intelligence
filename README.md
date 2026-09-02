@@ -333,17 +333,30 @@ Nothing is written until you drop `--dry-run`.
 
 ## Home screen icon
 
+Save any photo as `public/source-icon.jpg` — JPEG, PNG or straight-off-the-phone
+HEIC all work — then:
+
 ```bash
-# save any photo as public/source-icon.jpg, then
 npm run icons
+npm run icons -- --focus=top          # if the crop clipped your subject
+npm run icons -- --file=C:/pics/x.jpg # or point at it anywhere
 ```
 
-It takes a square crop (`--focus top|centre|bottom` for portrait photos),
-resizes to the sizes iOS and Android ask for, and writes them into `public/`.
-Commit, push, then on the phone: open the site in Safari, Share, **Add to Home
-Screen**. It opens without Safari's chrome.
+By default it picks the most visually salient square rather than a blind centre
+crop, which on a portrait photo of a person or an animal usually lands on the
+face. `--focus top|centre|bottom` overrides that.
+
+Commit the results, push, then on the phone open the site in **Safari** (only
+Safari can do this) → Share → **Add to Home Screen**. It opens without Safari's
+chrome. If it was already on your Home Screen, delete and re-add it — iOS caches
+the old icon indefinitely.
 
 Placeholder icons ship in the repo so nothing 404s before you replace them.
+
+This runs on Node via sharp, not Python. A machine can easily have several
+Pythons on its PATH with only one carrying Pillow, which makes the same command
+work in one terminal and fail in another; `npm run icons` resolves the same way
+everywhere.
 
 ## Deploying
 

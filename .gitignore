@@ -19,3 +19,7 @@ coverage/
 .scratch/
 .claude/launch.json
 .env.pglite-offline.bak
+
+# Your own icon source. The generated icons in public/ ARE committed —
+# Vercel serves them — but the original photo need not be.
+public/source-icon.*
