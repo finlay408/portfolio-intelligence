@@ -53,6 +53,7 @@ export function toEngineInstrument(row: typeof instruments.$inferSelect): Engine
     country: row.country,
     revenueRegions: row.revenueRegions ?? null,
     sector: row.sector,
+    sectorWeights: row.sectorWeights ?? null,
     industry: row.industry,
     yahooSymbol: row.yahooSymbol,
     alpacaSymbol: row.alpacaSymbol,
@@ -131,6 +132,7 @@ export async function loadLedger(options: { accountId?: number } = {}): Promise<
       {
         id: i.id,
         sector: i.sector,
+        sectorWeights: i.sectorWeights ?? null,
         country: i.country,
         currency: i.quoteCurrency,
         assetClass: i.assetClass,

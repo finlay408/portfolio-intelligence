@@ -162,7 +162,8 @@ the overview shows both, side by side, always labelled.
 | `npm run seed` | the golden portfolio; `-- --demo-prices` to map real tickers |
 | `npm run import -- --file=x.csv --dry-run` | load a portfolio from CSV; creates instruments from tickers |
 | `npm run import:t212 -- --dir=./exports --resolve` | import a Trading 212 export; resolves tickers by ISIN |
-| `npm run enrich` | sector, industry and country, keyless |
+| `npm run enrich` | sector, industry, country and fund look-through, keyless |
+| `npm run enrich -- --funds` | re-read ETF sector splits from their holdings |
 | `npm run seed:benchmarks` | install the S&P 500 / FTSE 100 / ACWI proxies |
 | `npm run icons` | rebuild the home-screen icons from `public/source-icon.jpg` |
 | `npm run backfill` | daily bars and FX for everything held, watched or benchmarked |
@@ -339,20 +340,39 @@ Nothing is written until you drop `--dry-run`.
 A price feed gives you prices. It does not tell you what a holding *is*.
 
 ```bash
-npm run enrich                 # sector, industry and country, automatically
+npm run enrich                 # equities and funds, automatically
+npm run enrich -- --funds      # funds only, when you have added an ETF
 npm run enrich -- --export     # classification.csv for everything else
 npm run enrich -- --apply      # read it back
 ```
 
-The automatic pass needs no API key: Yahoo's search endpoint returns sector and
-industry for equities, and the ISIN prefix gives the issuer's domicile exactly.
+The automatic pass needs no API key. Equities get sector and industry from
+Yahoo's search endpoint, and the ISIN prefix gives the issuer's domicile exactly.
 
-Three things it cannot do, which is what the CSV is for:
+**Funds get a look-through split.** An all-world tracker is not "Financials" and
+it is not "Unclassified" either — VWRP is stored as 31% technology, 17%
+financials and nine other buckets, read from the fund's own published holdings
+via Yahoo's `topHoldings` module. It is free, keyless, and works for LSE UCITS
+lines as well as US listings. Add VWRP or any other ETF, run `--funds`, and the
+sector grid explains it. Three things fall out of the same call:
 
-- **ETFs have no sector.** An all-world tracker is not "Financials", it is the
-  whole market, and the sector grid correctly shows it as Unclassified. Only a
-  single-sector fund gets a sector.
-- **Revenue geography.** Nobody publishes revenue-by-region for free. The export
+- the **sector split**, labelled exactly as equities are labelled, so a fund's
+  technology sleeve aggregates with a directly held NVDA;
+- the **asset class**, from the actual stock/bond/cash mix rather than from a
+  regex over the fund's title — that is what moves a gilt tracker to `bond`;
+- a **geography sanity check**: the top ten holdings' listing venues, compared
+  against the curated `revenue_regions` table, complaining when they disagree.
+
+A bond fund's sector list is discarded on purpose. Yahoo reports Vanguard's
+Global Aggregate as 100% "Financial Services" — those are the *issuers'* sectors,
+banks issue bonds — so it is stored as Fixed Income instead. Reading it
+literally would state the fund is half financials, which is false rather than
+merely imprecise.
+
+Two things it still cannot do, which is what the CSV is for:
+
+- **Revenue geography.** Nobody publishes revenue-by-region for free, funds
+  included: Yahoo has sectors but no regions. The export
   pre-fills index ETFs with approximate published index weights as a starting
   point; individual equities stay Unmapped until you say otherwise. "Unmapped"
   is the honest answer, not a defect.
@@ -361,9 +381,10 @@ Three things it cannot do, which is what the CSV is for:
   remainder lands in the attribution residual rather than being quietly
   reassigned.
 
-The CSV can also correct `asset_class`, which matters more than it sounds: the
-importer labels every fund an `etf`, so a gilt tracker and an equity tracker end
-up in the same bucket until you split them.
+The CSV carries `sector_weights` too, in the same `"Technology:0.31;Cash:0.02"`
+form, for the handful of funds Yahoo has no breakdown for — a synthetic ETP or a
+commodity fund. It can also correct `asset_class` by hand where the mix is
+ambiguous.
 
 **Why listing country and revenue geography are shown separately.** On a
 portfolio of UCITS ETFs, listing country reads *Ireland 77%* — that is where the

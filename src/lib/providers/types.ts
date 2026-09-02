@@ -78,6 +78,7 @@ export type Capability =
   | 'fx'
   | 'corp_actions'
   | 'earnings'
+  | 'fundamentals'
   | 'macro'
   | 'factors'
   | 'options';

@@ -45,6 +45,8 @@ export interface EngineInstrument {
   country: string | null;
   revenueRegions: Record<string, number> | null;
   sector: string | null;
+  /** A fund's look-through sector split. Null for an equity. */
+  sectorWeights?: Record<string, number> | null;
   industry: string | null;
   /**
    * Provider symbol mapping. The canonical `symbol` is internal and need not

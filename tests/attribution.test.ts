@@ -67,7 +67,9 @@ const meta = new Map<number, InstrumentMeta>([
   [1, { id: 1, sector: 'Information Technology', country: 'US', currency: 'USD', assetClass: 'equity', revenueRegions: { US: 0.6, EU: 0.4 }, themes: [{ key: 'Photonics', weight: ONE }] }],
   [2, { id: 2, sector: 'Industrials', country: 'GB', currency: 'USD', assetClass: 'equity', revenueRegions: { US: 0.5, APAC: 0.5 }, themes: [{ key: 'Defence', weight: d('0.6') }, { key: 'Photonics', weight: d('0.4') }] }],
   [3, { id: 3, sector: 'Industrials', country: 'GB', currency: 'GBP', assetClass: 'equity', revenueRegions: { UK: 0.2, LATAM: 0.8 }, themes: [{ key: 'Critical Minerals', weight: d('0.5') }] }],
-  [4, { id: 4, sector: null, country: 'IE', currency: 'GBP', assetClass: 'etf', revenueRegions: { US: 1 }, themes: [] }],
+  // A fund: no single sector, a look-through split instead. It must divide
+  // across sector buckets without the grid ceasing to reconcile.
+  [4, { id: 4, sector: null, sectorWeights: { Technology: 0.31, 'Financial Services': 0.17, Industrials: 0.11, Healthcare: 0.08, Cash: 0.0026 }, country: 'IE', currency: 'GBP', assetClass: 'etf', revenueRegions: { US: 1 }, themes: [] }],
   [5, { id: 5, sector: 'Health Care', country: 'US', currency: 'GBP', assetClass: 'equity', revenueRegions: null, themes: [{ key: 'Defence', weight: ONE }] }],
 ]);
 
@@ -140,6 +142,36 @@ describe('partial theme membership', () => {
     );
     const ratio = single.groups.get('Defence')!.total.div(double.groups.get('Defence')!.total);
     expect(ratio.minus('0.6').abs().lessThan('1e-20')).toBe(true);
+  });
+});
+
+describe('fund look-through', () => {
+  it('spreads a fund across its holdings\' sectors instead of Unclassified', () => {
+    const result = attribute(days, groupers.sector);
+    // Instrument 4 is the only fund and has no scalar sector. If look-through
+    // were not happening it would be the whole 'Unclassified' row.
+    expect(result.groups.has('Unclassified')).toBe(false);
+    expect(result.groups.has('Cash')).toBe(true);
+    expect(result.reconciliationGap.abs().lessThan('1e-20')).toBe(true);
+  });
+
+  it('gives the fund exactly its own return, no more and no less', () => {
+    // A fund's weights are renormalised, so the sum of its sector slices must
+    // equal its position contribution. Anything else double-counts it.
+    const positions = attribute(days, byInstrument);
+    const fundOnly = attribute(days, (id) => (id === 4 ? groupers.sector(id) : []));
+    const spread = [...fundOnly.groups]
+      .filter(([key]) => key !== RESIDUAL_KEY)
+      .reduce<Decimal>((a, [, p]) => a.plus(p.total), ZERO);
+    expect(spread.minus(positions.groups.get('4')!.total).abs().lessThan('1e-20')).toBe(true);
+  });
+
+  it('falls back to the scalar sector when a fund has no breakdown', () => {
+    const noWeights = new Map(meta);
+    noWeights.set(4, { ...meta.get(4)!, sectorWeights: null, sector: 'Fixed Income' });
+    const result = attribute(days, makeGroupers(noWeights).sector);
+    expect(result.groups.has('Fixed Income')).toBe(true);
+    expect(result.groups.has('Cash')).toBe(false);
   });
 });
 

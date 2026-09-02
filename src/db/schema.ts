@@ -62,6 +62,13 @@ export const instruments = pgTable(
     /** {"US":0.6,"EU":0.25,"APAC":0.15} — the true geographic exposure. */
     revenueRegions: jsonb('revenue_regions').$type<Record<string, number>>(),
     sector: text('sector'), // GICS sector
+    /**
+     * {"Technology":0.31,"Financial Services":0.17,...} — a fund's look-through
+     * sector split. An all-world tracker has no single sector, and forcing one
+     * on it is why funds used to fall into "Unclassified". Null for an ordinary
+     * equity, which has `sector` instead.
+     */
+    sectorWeights: jsonb('sector_weights').$type<Record<string, number>>(),
     industry: text('industry'),
     isActive: boolean('is_active').notNull().default(true),
     // provider symbol mapping

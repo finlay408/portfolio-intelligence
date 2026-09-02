@@ -156,6 +156,8 @@ export function attribute(days: PortfolioDay[], grouper: Grouper): AttributionRe
 export interface InstrumentMeta {
   id: number;
   sector: string | null;
+  /** A fund's look-through sector split, weights of any scale. Null for an equity. */
+  sectorWeights?: Record<string, number> | null;
   country: string | null;
   currency: string;
   assetClass: string;
@@ -173,8 +175,38 @@ export function makeGroupers(meta: Map<number, InstrumentMeta>) {
       return [{ key, weight: ONE }];
     };
 
+  /**
+   * Split one instrument across several buckets. Weights are renormalised to
+   * sum to 1 so that no instrument can contribute more or less than its own
+   * return to the grid — that invariant is what makes attribution reconcile.
+   */
+  const spread = (
+    weights: Record<string, number> | null | undefined,
+    fallback: string,
+  ): Array<{ key: string; weight: Decimal }> => {
+    if (!weights || Object.keys(weights).length === 0) return [{ key: fallback, weight: ONE }];
+    const total = Object.values(weights).reduce((a, b) => a + b, 0);
+    if (total <= 0) return [{ key: fallback, weight: ONE }];
+    return Object.entries(weights).map(([key, w]) => ({
+      key,
+      weight: divOrZero(new Decimal(w), new Decimal(total)),
+    }));
+  };
+
   return {
-    sector: single((m) => m.sector),
+    /**
+     * Funds are looked through to their holdings' sectors. An all-world tracker
+     * is not one sector, and before the look-through existed it was the largest
+     * "Unclassified" row in the grid — the position most in need of explaining,
+     * explaining nothing.
+     */
+    sector: ((id) => {
+      const m = meta.get(id);
+      if (m?.sectorWeights && Object.keys(m.sectorWeights).length > 0) {
+        return spread(m.sectorWeights, 'Unclassified');
+      }
+      return [{ key: m?.sector || 'Unclassified', weight: ONE }];
+    }) as Grouper,
     /** Listing venue. Shown alongside, never instead of, revenue geography. */
     listingCountry: single((m) => m.country),
     currency: single((m) => m.currency),
@@ -184,18 +216,8 @@ export function makeGroupers(meta: Map<number, InstrumentMeta>) {
      * True geographic exposure. An LSE-listed miner with 90% Chilean revenue is
      * not UK exposure, and this is the grouper that says so.
      */
-    revenueGeography: ((id) => {
-      const regions = meta.get(id)?.revenueRegions;
-      if (!regions || Object.keys(regions).length === 0) {
-        return [{ key: 'Unmapped', weight: ONE }];
-      }
-      const total = Object.values(regions).reduce((a, b) => a + b, 0);
-      if (total <= 0) return [{ key: 'Unmapped', weight: ONE }];
-      return Object.entries(regions).map(([key, w]) => ({
-        key,
-        weight: divOrZero(new Decimal(w), new Decimal(total)),
-      }));
-    }) as Grouper,
+    revenueGeography: ((id) =>
+      spread(meta.get(id)?.revenueRegions, 'Unmapped')) as Grouper,
   };
 }
 

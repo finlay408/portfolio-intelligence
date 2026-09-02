@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 const GRID_LABELS: Record<string, { title: string; subtitle?: string }> = {
   position: { title: 'By position' },
   theme: { title: 'By theme', subtitle: 'honouring partial membership weights' },
-  sector: { title: 'By sector', subtitle: 'GICS' },
+  sector: { title: 'By sector', subtitle: 'funds looked through to their holdings' },
   revenueGeography: {
     title: 'By revenue geography',
     subtitle: 'where the money is actually earned',

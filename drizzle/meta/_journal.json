@@ -8,6 +8,13 @@
       "when": 1788297705741,
       "tag": "0000_colorful_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788387396547,
+      "tag": "0001_fund_sector_weights",
+      "breakpoints": true
     }
   ]
 }

@@ -86,7 +86,11 @@ export default async function ExposurePage() {
 
       <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
         <WeightTable title="By position" summary={c} />
-        <WeightTable title="By sector" summary={overview.bySector} />
+        <WeightTable
+          title="By sector"
+          subtitle="funds looked through to their published holdings"
+          summary={overview.bySector}
+        />
         <WeightTable title="By theme" summary={overview.byTheme} />
         <WeightTable
           title="By revenue geography"

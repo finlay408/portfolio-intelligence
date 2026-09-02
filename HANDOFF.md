@@ -16,7 +16,7 @@ already paid for.
 | Hosting | Vercel, `AUTH_MODE=vercel-protection` |
 | Owner | UK-based, GBP, Trading 212 ISA |
 
-All six phases of the brief are built. 132 TypeScript tests and 65 Python
+All six phases of the brief are built. 155 TypeScript tests and 65 Python
 checks pass; `tsc --noEmit` and `next build` are clean.
 
 **Real data is loaded.** This is not a demo — treat the database as production.
@@ -96,7 +96,12 @@ These each cost real time. They are in memory too, but repeating them here:
 3. **Revenue geography is 31% Unmapped** — the individual equities. ETFs are
    filled from index weights. Deliberately not guessed: defaulting a US listing
    to US revenue is right for Duke Energy and wrong for Amgen, and that is the
-   precise error §5 warns about.
+   precise error §5 warns about. Note that fund *sectors* are now solved
+   (`npm run enrich -- --funds`, below) but fund *regions* are not — Yahoo
+   publishes no regional breakdown and no other free source does either. The
+   next step, if it is ever wanted, is the issuers' own holdings files:
+   iShares, Vanguard and Invesco all publish full holdings as free CSV/JSON,
+   but each issuer needs its own scraper and a per-fund product id.
 
 4. **No API keys.** Everything runs keyless off Yahoo. Adding them would give:
    FRED → macro dashboard and the SONIA risk-free rate (Sharpe currently uses
@@ -113,6 +118,34 @@ These each cost real time. They are in memory too, but repeating them here:
    production database and should not be put there.
 
 ---
+
+## Fund look-through (added 2 September 2026)
+
+`instruments.sector_weights` holds a fund's published sector split, filled by
+`npm run enrich -- --funds` from Yahoo's `topHoldings` module. All 27 funds are
+populated; VWRP alone is 47.8% of the portfolio and used to be the whole
+"Unclassified" row. The sector grid's effective N went 4.0 → 6.7.
+
+Four things that were learnt the hard way against the real holdings:
+
+- **`quoteSummary` needs a crumb**, unlike the chart endpoint: a cookie from
+  fc.yahoo.com, then `/v1/test/getcrumb`. Cached in `yahoo-fund.ts`, re-minted
+  once on a 401. It also rejects the app's polite User-Agent, so that file sends
+  a browser one.
+- **A bond fund's sector list is its issuers' sectors.** VAGS.L came back as
+  100% "Financial Services" because banks issue bonds. Anything with a stock
+  position under 5% has its sector list discarded and becomes Fixed Income.
+- **Leveraged products report notional.** TSM3.L returns 300% technology and
+  3GIS.L returns cash −100% / other +200%. Weights summing above 100% are
+  renormalised; negative sleeves are dropped.
+- **`other` is a real sleeve.** SOYB, CMOC.DE and 3GIS.L have no sectors and no
+  holdings but are 100% "other" — commodities and swaps. They map to
+  `Alternatives`, which is a statement, not the absence of one.
+
+Still Unclassified: **SGLN.L only** (£1,091, 7.7%). It is a physical gold ETC,
+stored as `asset_class = 'equity'` by the importer, and Yahoo has no fund data
+for it — an ETC holds bars, not holdings. Fix by hand if wanted:
+`--export`, put `Alternatives:1` in its `sector_weights` cell, `--apply`.
 
 ## Non-obvious decisions already made
 
@@ -161,7 +194,8 @@ npm run integrity-check                 # must report 0 mismatches
 
 Adding a holding: record the trade in the UI if the instrument exists,
 otherwise `npm run import -- --file=x.csv` (creates instruments from tickers),
-then `npm run enrich`.
+then `npm run enrich` — or `npm run enrich -- --funds` if it is an ETF and
+nothing else changed.
 
 `npm test && npm run typecheck && python analytics/test_analytics.py` before any
 commit.
