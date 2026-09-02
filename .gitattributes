@@ -1,0 +1,13 @@
+# Normalise line endings to LF in the repository.
+#
+# Development happens on Windows; CI and the scheduled jobs run on Linux. Without
+# this, every file checked out on Windows comes back with CRLF and shows as
+# wholly modified, which buries real diffs in noise.
+* text=auto eol=lf
+
+# Binary and generated files git should not try to diff or normalise.
+*.png binary
+*.jpg binary
+*.woff2 binary
+package-lock.json -diff linguist-generated
+drizzle/meta/** -diff linguist-generated
