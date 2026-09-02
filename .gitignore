@@ -26,3 +26,4 @@ public/source-icon.*
 t212-instruments.csv
 my-portfolio.csv
 classification.csv
+.claude/settings.local.json
