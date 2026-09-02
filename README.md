@@ -160,6 +160,8 @@ the overview shows both, side by side, always labelled.
 | `npm run migrate` | apply migrations (works with `pglite://` too) |
 | `npm run db:generate` | generate a migration after a schema change |
 | `npm run seed` | the golden portfolio; `-- --demo-prices` to map real tickers |
+| `npm run import -- --file=x.csv --dry-run` | load a portfolio from CSV; creates instruments from tickers |
+| `npm run icons` | rebuild the home-screen icons from `public/source-icon.jpg` |
 | `npm run backfill` | daily bars and FX for everything held, watched or benchmarked |
 | `npm run recompute -- --from=inception` | rebuild every cached daily snapshot |
 | `npm run integrity-check` | recompute from inception and diff against the cache |
@@ -288,6 +290,60 @@ Once you start entering your own trades, delete the fixture rows and add instrum
 `yahoo_symbol` values.
 
 ---
+
+## Putting your own portfolio in
+
+There is no "add instrument" screen — the trade form only offers instruments
+that already exist. That is fine once you are running (you add a holding
+rarely) but useless for loading an existing portfolio, so use the importer.
+
+Copy `portfolio-template.csv`, fill it in, and:
+
+```bash
+npm run import -- --file=my-portfolio.csv --dry-run   # always this first
+npm run import -- --file=my-portfolio.csv
+npm run backfill
+npm run recompute -- --from=inception
+```
+
+One row per event. `type` is `buy`, `sell`, `deposit`, `withdrawal`,
+`dividend`, `interest`, `fee` or `tax`. Only `account`, `type` and `date` are
+required columns; the rest are read if present under any reasonable name
+(`qty`/`shares`/`units` all work, dates may be `YYYY-MM-DD` or `DD/MM/YYYY`).
+
+What it does for you:
+
+- **Creates instruments from the ticker.** It asks Yahoo for the name,
+  exchange, asset class and currency, so you never type them.
+- **Gets GBX right.** Yahoo reports a pence-quoted line as `GBp`, and the
+  importer stores it at a 0.01 multiplier. The dry run prints which of your
+  holdings are in pence — worth reading, because it is not the `.L` suffix that
+  decides: `RR.L` and `SHEL.L` quote in pence, `VUSA.L` quotes in pounds.
+- **Applies stamp duty.** 0.5% on UK share purchases, nothing on ETFs and
+  investment trusts.
+- **Uses the FX rate for the trade date**, not today's, when you leave
+  `fx_rate` blank. If the rate is not stored yet it skips the row and says so
+  rather than guessing — run `npm run backfill` and import again.
+
+**Prices go in pounds, not pence.** If you bought Rolls-Royce at 450p, write
+`4.50`. The importer's dry run shows the last traded price both ways so you can
+check you have the magnitude right before committing.
+
+Nothing is written until you drop `--dry-run`.
+
+## Home screen icon
+
+```bash
+# save any photo as public/source-icon.jpg, then
+npm run icons
+```
+
+It takes a square crop (`--focus top|centre|bottom` for portrait photos),
+resizes to the sizes iOS and Android ask for, and writes them into `public/`.
+Commit, push, then on the phone: open the site in Safari, Share, **Add to Home
+Screen**. It opens without Safari's chrome.
+
+Placeholder icons ship in the repo so nothing 404s before you replace them.
 
 ## Deploying
 

@@ -32,7 +32,13 @@ interface ChartResponse {
   chart: {
     result?: Array<{
       meta: {
+        symbol?: string;
         currency?: string;
+        longName?: string;
+        shortName?: string;
+        exchangeName?: string;
+        fullExchangeName?: string;
+        instrumentType?: string;
         regularMarketPrice?: number;
         chartPreviousClose?: number;
         previousClose?: number;
@@ -278,4 +284,71 @@ export async function yahooFxHistory(
     out.push({ date: iso(ts[i]!), rate: close });
   }
   return out;
+}
+
+
+/* ---------------- Instrument lookup ---------------- */
+
+export interface InstrumentLookup {
+  yahooSymbol: string;
+  name: string;
+  /** Currency AFTER the multiplier — 'GBp' becomes GBP at 0.01. */
+  quoteCurrency: string;
+  quoteMultiplier: string;
+  exchangeMic: string | null;
+  assetClass: string;
+  /** Yahoo's raw currency label, kept so a GBX line is auditable. */
+  rawCurrency: string | null;
+  lastPrice: number | null;
+}
+
+const EXCHANGE_MIC: Record<string, string> = {
+  LSE: 'XLON',
+  NMS: 'XNAS',
+  NGM: 'XNAS',
+  NCM: 'XNAS',
+  NasdaqGS: 'XNAS',
+  NYQ: 'XNYS',
+  NYSE: 'XNYS',
+  PCX: 'ARCX',
+  ASE: 'XASE',
+  BATS: 'BATS',
+};
+
+const ASSET_CLASS: Record<string, string> = {
+  EQUITY: 'equity',
+  ETF: 'etf',
+  MUTUALFUND: 'etf',
+  CURRENCY: 'cash',
+  INDEX: 'equity',
+};
+
+/**
+ * Resolve a ticker into everything `instruments` needs.
+ *
+ * The single most valuable field here is `currency`. Yahoo reports a
+ * pence-quoted LSE line as `GBp` (lowercase p), and that one letter is the
+ * difference between a position worth £4,500 and one worth £450,000. Reading it
+ * from the provider is far safer than asking a human to remember which of their
+ * UK holdings quote in pence — most people do not know, and the ones who think
+ * they do are wrong about the ETFs.
+ */
+export async function lookupInstrument(symbol: string): Promise<InstrumentLookup> {
+  const r = await chart(symbol, { range: '5d', interval: '1d' }, 'quote');
+  const raw = r.meta.currency ?? null;
+  const isPence = raw === 'GBp';
+
+  return {
+    yahooSymbol: r.meta.symbol ?? symbol,
+    name: r.meta.longName ?? r.meta.shortName ?? symbol,
+    quoteCurrency: isPence ? 'GBP' : (raw ?? 'USD').toUpperCase(),
+    quoteMultiplier: isPence ? '0.01' : '1',
+    exchangeMic:
+      EXCHANGE_MIC[r.meta.exchangeName ?? ''] ??
+      EXCHANGE_MIC[r.meta.fullExchangeName ?? ''] ??
+      null,
+    assetClass: ASSET_CLASS[r.meta.instrumentType ?? ''] ?? 'equity',
+    rawCurrency: raw,
+    lastPrice: r.meta.regularMarketPrice ?? null,
+  };
 }

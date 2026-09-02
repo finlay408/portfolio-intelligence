@@ -5,7 +5,25 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Portfolio Intelligence',
   description: 'Private risk and attribution analytics',
+  // Private by nature: never index it, and do not follow anything out of it.
   robots: { index: false, follow: false },
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+    shortcut: '/favicon.ico',
+  },
+  // Added to the iOS Home Screen this opens without Safari's chrome, which is
+  // what makes it feel like an app rather than a bookmark.
+  appleWebApp: {
+    capable: true,
+    title: 'Portfolio',
+    statusBarStyle: 'default',
+  },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
@@ -13,6 +31,11 @@ export const viewport: Viewport = {
     { media: '(prefers-color-scheme: dark)', color: '#1b1d21' },
     { media: '(prefers-color-scheme: light)', color: '#fafafa' },
   ],
+  width: 'device-width',
+  initialScale: 1,
+  // The dense tables need pinch-zoom on a phone, so scaling stays enabled.
+  maximumScale: 5,
+  viewportFit: 'cover',
 };
 
 const NAV = [

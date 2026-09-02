@@ -28,7 +28,9 @@
     "earnings": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/earnings.ts",
     "options": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/options.ts",
     "migrate": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/migrate.ts",
-    "load-payloads": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/load-payloads.ts"
+    "load-payloads": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/load-payloads.ts",
+    "import": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import.ts",
+    "icons": "python scripts/make_icons.py public/source-icon.jpg"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.6",

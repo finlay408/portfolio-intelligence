@@ -1,0 +1,9 @@
+account,type,date,symbol,quantity,price,amount,currency,fx_rate,fees,note
+Stocks & Shares ISA,deposit,2024-01-02,,,,20000,GBP,,,opening transfer
+Stocks & Shares ISA,buy,2024-01-15,AAPL,25,185.50,,USD,0.79,3.50,
+Stocks & Shares ISA,buy,2024-02-01,RR.L,500,4.50,,GBP,,5.00,price in POUNDS not pence
+Stocks & Shares ISA,buy,2024-03-05,VUSA.L,6.25,80.00,,GBP,,,monthly drip
+Stocks & Shares ISA,dividend,2024-05-01,AAPL,,,6.00,USD,0.79,,
+Stocks & Shares ISA,sell,2024-08-01,RR.L,200,5.20,,GBP,,5.00,trimmed
+General Investment Account,deposit,2024-01-05,,,,6000,GBP,,,
+General Investment Account,buy,2024-01-10,SHEL.L,100,25.00,,GBP,,4.95,
