@@ -32,7 +32,8 @@
     "import": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import.ts",
     "icons": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/icons.ts",
     "import:t212": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-t212.ts",
-    "seed:benchmarks": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-benchmarks.ts"
+    "seed:benchmarks": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-benchmarks.ts",
+    "enrich": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/enrich.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.6",

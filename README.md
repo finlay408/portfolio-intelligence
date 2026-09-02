@@ -161,6 +161,9 @@ the overview shows both, side by side, always labelled.
 | `npm run db:generate` | generate a migration after a schema change |
 | `npm run seed` | the golden portfolio; `-- --demo-prices` to map real tickers |
 | `npm run import -- --file=x.csv --dry-run` | load a portfolio from CSV; creates instruments from tickers |
+| `npm run import:t212 -- --dir=./exports --resolve` | import a Trading 212 export; resolves tickers by ISIN |
+| `npm run enrich` | sector, industry and country, keyless |
+| `npm run seed:benchmarks` | install the S&P 500 / FTSE 100 / ACWI proxies |
 | `npm run icons` | rebuild the home-screen icons from `public/source-icon.jpg` |
 | `npm run backfill` | daily bars and FX for everything held, watched or benchmarked |
 | `npm run recompute -- --from=inception` | rebuild every cached daily snapshot |
@@ -330,6 +333,42 @@ What it does for you:
 check you have the magnitude right before committing.
 
 Nothing is written until you drop `--dry-run`.
+
+## Classification: sector, geography and themes
+
+A price feed gives you prices. It does not tell you what a holding *is*.
+
+```bash
+npm run enrich                 # sector, industry and country, automatically
+npm run enrich -- --export     # classification.csv for everything else
+npm run enrich -- --apply      # read it back
+```
+
+The automatic pass needs no API key: Yahoo's search endpoint returns sector and
+industry for equities, and the ISIN prefix gives the issuer's domicile exactly.
+
+Three things it cannot do, which is what the CSV is for:
+
+- **ETFs have no sector.** An all-world tracker is not "Financials", it is the
+  whole market, and the sector grid correctly shows it as Unclassified. Only a
+  single-sector fund gets a sector.
+- **Revenue geography.** Nobody publishes revenue-by-region for free. The export
+  pre-fills index ETFs with approximate published index weights as a starting
+  point; individual equities stay Unmapped until you say otherwise. "Unmapped"
+  is the honest answer, not a defect.
+- **Themes** are yours. `"Defence:0.7;Photonics:0.3"` in the themes column, or
+  just `"Defence"` for a full weighting. Partial weights are supported and the
+  remainder lands in the attribution residual rather than being quietly
+  reassigned.
+
+The CSV can also correct `asset_class`, which matters more than it sounds: the
+importer labels every fund an `etf`, so a gilt tracker and an equity tracker end
+up in the same bucket until you split them.
+
+**Why listing country and revenue geography are shown separately.** On a
+portfolio of UCITS ETFs, listing country reads *Ireland 77%* — that is where the
+funds are domiciled and it tells you nothing about risk. The revenue view on the
+same portfolio reads *US 45%*. That gap is the entire reason both exist.
 
 ## Home screen icon
 
