@@ -66,9 +66,11 @@ def _parse_french_csv(raw: str) -> pd.DataFrame:
         parts = [p.strip() for p in line.split(",")]
         first = parts[0]
         if header is None:
-            # The header row is the one whose first cell is blank and which has
-            # at least two more columns.
-            if first == "" and len(parts) > 2:
+            # The header row is the one whose first cell is blank — the date
+            # column is unlabelled. Two cells is enough: the momentum file's
+            # header is just ',Mom', and requiring three silently skipped it,
+            # which took the whole factor pull down with it.
+            if first == "" and len(parts) >= 2 and any(p for p in parts[1:]):
                 header = ["date"] + parts[1:]
             continue
         if len(first) == 8 and first.isdigit():

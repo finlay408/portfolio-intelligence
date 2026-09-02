@@ -395,6 +395,33 @@ def test_factors() -> None:
     )
     check("the RF column survives", "RF" in parsed.columns)
 
+    # The momentum file's header is a bare ',Mom' - two cells, not seven.
+    # A parser that insists on more columns skips it, finds no header, and
+    # takes the entire factor pull down with it. This is the real layout.
+    mom_raw = '\n'.join(
+        [
+            "This file was created by using the 202606 CRSP database.  It",
+            "contains a momentum factor, constructed from six portfolios.",
+            "",
+            "Missing data are indicated by -99.99 or -999.",
+            "",
+            ",Mom",
+            "19261103,   0.35",
+            "19261104,  -0.61",
+            "",
+            "  Annual Factors: January-December",
+            ",Mom",
+            "1927,  20.00",
+        ]
+    )
+    mom = factor_lib._parse_french_csv(mom_raw)
+    check("a two-column momentum header parses", len(mom) == 2, f"got {len(mom)} rows")
+    check(
+        "momentum converts from percent",
+        len(mom) == 2 and close(float(mom.iloc[0]["Mom"]), 0.0035, 1e-12),
+        str(mom.iloc[0].to_dict()) if len(mom) else "empty",
+    )
+
     # A synthetic portfolio with known loadings.
     n = 500
     idx = pd.bdate_range("2022-01-03", periods=n)

@@ -23,3 +23,5 @@ coverage/
 # Your own icon source. The generated icons in public/ ARE committed —
 # Vercel serves them — but the original photo need not be.
 public/source-icon.*
+t212-instruments.csv
+my-portfolio.csv

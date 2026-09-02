@@ -22,14 +22,20 @@ import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
 
+import env as env_loader
 from jsonio import dumps as json_dumps
+
+# Read .env once, on import, before anything asks for DATABASE_URL. A variable
+# already present in the environment (as in CI) always wins.
+env_loader.load()
 
 
 def connection_string() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError(
-            "DATABASE_URL is not set. In GitHub Actions it comes from repository secrets."
+            "DATABASE_URL is not set. Put it in .env, or supply it in the environment "
+            "(GitHub Actions takes it from repository secrets)."
         )
     return url
 
