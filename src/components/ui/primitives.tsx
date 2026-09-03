@@ -41,12 +41,12 @@ export function Card({
       )}
     >
       {(title || action) && (
-        <header className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-2.5">
-          <div className="min-w-0">
-            <h2 className="truncate text-[13px] font-medium tracking-tight text-ink">{title}</h2>
-            {subtitle && <p className="mt-0.5 truncate text-[11px] text-muted">{subtitle}</p>}
+        <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-3 py-2.5 sm:px-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[13px] font-medium tracking-tight text-ink sm:truncate">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[11px] leading-snug text-muted sm:truncate">{subtitle}</p>}
           </div>
-          {action && <div className="shrink-0 text-[11px] text-muted">{action}</div>}
+          {action && <div className="min-w-0 text-[11px] text-muted sm:shrink-0">{action}</div>}
         </header>
       )}
       <div className="min-h-0 flex-1">{children}</div>
@@ -234,7 +234,7 @@ export function Th({
   return (
     <th
       className={cn(
-        'sticky top-0 z-10 whitespace-nowrap border-b border-line bg-surface px-3 py-2',
+        'sticky top-0 z-10 whitespace-nowrap border-b border-line bg-surface px-2 py-2 sm:px-3',
         'text-[10px] font-medium uppercase tracking-wide text-muted',
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
@@ -261,7 +261,7 @@ export function Td({
   return (
     <td
       className={cn(
-        'whitespace-nowrap border-b border-line/60 px-3 py-1.5',
+        'whitespace-nowrap border-b border-line/60 px-2 py-1.5 sm:px-3',
         numeric && 'tabular',
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',

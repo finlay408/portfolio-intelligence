@@ -16,22 +16,26 @@
  * That is cheap — it is a walk over the trade list — and it is what guarantees
  * the displayed holdings can never drift from the trades behind them.
  */
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import {
   accounts,
   analyticsSnapshots,
+  benchmarks,
   corporateActions,
   dataHealth,
   earningsEvents,
   instruments,
   jobRuns,
+  macroSeries,
   portfolioDaily,
+  pricesDaily,
   quotesLive,
   watchlist,
 } from '@/db/schema';
 import { Decimal, ONE, ZERO, dec, divOrZero } from './decimal';
-import { addDays, daysBetween, monthKey, quarterKey, todayIso, yearKey } from './dates';
+import { addDays, daysBetween, eachDay, monthKey, quarterKey, todayIso, yearKey } from './dates';
+import type { LevelPoint } from './engine/windows';
 import {
   attribute,
   byInstrument,
@@ -106,6 +110,11 @@ export interface OverviewData {
     threeMonth: Decimal | null;
     maxDrawdown: ReturnType<typeof maxDrawdown> | null;
   };
+  /**
+   * Total value against cumulative net deposits, one point per cached day. The
+   * gap between the two lines is the money the portfolio has made or lost.
+   */
+  valueSeries: Array<{ date: IsoDate; valueGbp: number; netDepositsGbp: number }>;
   mwr: number | null;
   concentration: ReturnType<typeof summariseWeights>;
   bySector: ReturnType<typeof groupWeights>;
@@ -255,6 +264,17 @@ export async function getOverview(accountId?: number): Promise<OverviewData> {
       threeMonth: windowReturn(series, addDays(asOf, -91)),
       maxDrawdown: series.length > 0 ? maxDrawdown(series) : null,
     },
+    valueSeries: (() => {
+      let deposits = ZERO;
+      return merged.map((m) => {
+        deposits = deposits.plus(m.netFlowGbp);
+        return {
+          date: m.date,
+          valueGbp: m.marketValueGbp.toNumber(),
+          netDepositsGbp: deposits.toNumber(),
+        };
+      });
+    })(),
     mwr,
     concentration: summariseWeights(weightRows),
     bySector: groupWeights(positionsForGrouping, groupers.sector),
@@ -435,6 +455,113 @@ export async function getAnalytics<T = Record<string, unknown>>(
   const row = rows[0];
   if (!row) return null;
   return { payload: row.payload as T, snapDate: row.snapDate, computedAt: row.computedAt };
+}
+
+/* ---------------- Market context: benchmark levels and the risk-free rate ---------------- */
+
+export interface MarketContext {
+  benchmark: {
+    code: string;
+    name: string;
+    currency: string;
+    proxySymbol: string;
+    /** Key into `levels` for the GBP-translated series — the default view (§3.3). */
+    gbpLabel: string;
+    /** Key into `levels` for the local-currency series, or null for a GBP benchmark. */
+    localLabel: string | null;
+    levels: Record<string, LevelPoint[]>;
+  } | null;
+  /** Daily GBP risk-free rate by calendar date, carried forward. Empty until FRED is loaded. */
+  riskFreeDaily: Map<IsoDate, number>;
+  riskFreeSource: string | null;
+}
+
+/**
+ * Benchmark price levels in both currencies, read straight from the stored
+ * daily bars and FX so the comparison is always as current as the portfolio
+ * series it sits beside. Regressions still come from the nightly job; this is
+ * only the plain "you versus the index" arithmetic.
+ *
+ * A missing FX rate drops the day rather than assuming parity (§3).
+ */
+export async function getMarketContext(code = 'SPX'): Promise<MarketContext> {
+  const [bench] = await db.select().from(benchmarks).where(eq(benchmarks.code, code)).limit(1);
+  const riskFree = await loadRiskFree();
+
+  if (!bench) return { benchmark: null, ...riskFree };
+
+  const [proxy] = await db
+    .select({ id: instruments.id, quoteCurrency: instruments.quoteCurrency })
+    .from(instruments)
+    .where(eq(instruments.symbol, bench.proxySymbol))
+    .limit(1);
+  if (!proxy) return { benchmark: null, ...riskFree };
+
+  const rows = await db
+    .select({ date: pricesDaily.priceDate, close: pricesDaily.close })
+    .from(pricesDaily)
+    .where(eq(pricesDaily.instrumentId, proxy.id))
+    .orderBy(asc(pricesDaily.priceDate));
+  if (rows.length === 0) return { benchmark: null, ...riskFree };
+
+  const local: LevelPoint[] = rows.map((r) => ({ date: r.date, level: Number(r.close) }));
+  const gbpLabel = `${bench.name} (GBP)`;
+
+  if (proxy.quoteCurrency === 'GBP') {
+    return {
+      benchmark: {
+        code: bench.code,
+        name: bench.name,
+        currency: 'GBP',
+        proxySymbol: bench.proxySymbol,
+        gbpLabel,
+        localLabel: null,
+        levels: { [gbpLabel]: local },
+      },
+      ...riskFree,
+    };
+  }
+
+  const fx = await loadFx(rows[0]!.date, todayIso());
+  const gbp: LevelPoint[] = [];
+  for (const r of rows) {
+    const rate = fx.rateOn(proxy.quoteCurrency, 'GBP', r.date);
+    if (rate) gbp.push({ date: r.date, level: Number(r.close) * rate.toNumber() });
+  }
+  const localLabel = `${bench.name} (${proxy.quoteCurrency})`;
+
+  return {
+    benchmark: {
+      code: bench.code,
+      name: bench.name,
+      currency: proxy.quoteCurrency,
+      proxySymbol: bench.proxySymbol,
+      gbpLabel,
+      localLabel,
+      levels: { [gbpLabel]: gbp, [localLabel]: local },
+    },
+    ...riskFree,
+  };
+}
+
+/** SONIA from FRED (IUDSOIA), annualised percent, as a daily decimal by calendar date. */
+async function loadRiskFree(): Promise<Pick<MarketContext, 'riskFreeDaily' | 'riskFreeSource'>> {
+  const rows = await db
+    .select({ date: macroSeries.obsDate, value: macroSeries.value })
+    .from(macroSeries)
+    .where(eq(macroSeries.seriesId, 'IUDSOIA'))
+    .orderBy(asc(macroSeries.obsDate));
+  const observations = rows.filter((r) => r.value !== null);
+  if (observations.length === 0) return { riskFreeDaily: new Map(), riskFreeSource: null };
+
+  const byDate = new Map(observations.map((r) => [r.date, Number(r.value) / 100 / 252]));
+  const out = new Map<IsoDate, number>();
+  let last = 0;
+  for (const d of eachDay(observations[0]!.date, todayIso())) {
+    last = byDate.get(d) ?? last;
+    out.set(d, last);
+  }
+  return { riskFreeDaily: out, riskFreeSource: 'SONIA (FRED IUDSOIA)' };
 }
 
 /* ---------------- Operational views ---------------- */

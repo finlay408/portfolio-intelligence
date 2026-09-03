@@ -132,6 +132,38 @@ def test_risk() -> None:
     pack = risk_lib.risk_pack(PORT, {"bench": BENCH})
     check("risk pack carries both estimate and uncertainty", pack["benchmarks"]["bench"]["regression"]["alpha_stderr_annualised"] > 0)
     check("rolling windows are present", "vol_252d" in pack["rolling"])
+    check("rolling windows match the trailing windows", pack["rolling_windows"] == [21, 63, 126, 252])
+
+    # Trailing windows: the figures the overview leads with (§7.4, "current").
+    windows = pack["windows"]
+    check("every trailing window is reported", set(windows) == {"1m", "3m", "6m", "ytd", "1y", "all"})
+    check("the 1M window has 21 observations", windows["1m"]["observations"] == 21)
+    check("the 1Y window has 252 observations", windows["1y"]["observations"] == 252)
+    check("the all window is the full series", windows["all"]["observations"] == len(PORT))
+    check(
+        "a 21-day window has no regression, and says why",
+        windows["1m"]["benchmarks"]["bench"]["regression"] is None
+        and "21" in windows["1m"]["benchmarks"]["bench"]["regression_note"],
+    )
+    reg_1y = windows["1y"]["benchmarks"]["bench"]["regression"]
+    check("the 1Y window regression recovers beta", reg_1y is not None and close(reg_1y["beta"], 1.3, 0.1), str(reg_1y and reg_1y["beta"]))
+    check(
+        "the all window matches since-inception",
+        close(windows["all"]["sharpe"], pack["since_inception"]["sharpe"], 1e-12)
+        and close(windows["all"]["max_drawdown"]["depth"], pack["since_inception"]["max_drawdown"]["depth"], 1e-12),
+    )
+    tail_return = float((1 + PORT.tail(63)).prod() - 1)
+    check("the 3M cumulative return compounds the last 63 days", close(windows["3m"]["cumulative_return"], tail_return, 1e-12))
+    ytd = windows["ytd"]
+    check("YTD starts in the last year of the series", ytd["from"].startswith(str(PORT.index[-1].year)))
+
+    rolled_beta = pack["benchmarks"]["bench"]["rolling_beta_63d"]
+    check("rolling beta is produced", rolled_beta is not None and len(rolled_beta["values"]) > 0)
+    check("rolling beta ends near the true beta", rolled_beta is not None and abs(rolled_beta["latest"] - 1.3) < 0.2, str(rolled_beta and rolled_beta["latest"]))
+    check(
+        "rolling beta on too little data is None",
+        risk_lib.rolling_beta(PORT.head(30), BENCH.head(30), 63) is None,
+    )
 
 
 def test_var() -> None:

@@ -235,8 +235,30 @@ def up_down_capture(portfolio: pd.Series, benchmark: pd.Series) -> dict[str, Any
     }
 
 
-def rolling_metrics(returns: pd.Series, windows: tuple[int, ...] = (30, 90, 252)) -> dict[str, Any]:
+# Rolling windows in trading days: 1M, 3M, 6M, 1Y. They match the trailing
+# windows the web app offers, so the rolling chart and the headline figure for
+# the same window are the same computation seen two ways.
+ROLLING_WINDOWS: tuple[int, ...] = (21, 63, 126, 252)
+
+# The trailing windows the overview can be switched between. 'ytd' is
+# date-anchored rather than a count and is handled separately.
+TRAILING_WINDOWS: dict[str, int | None] = {
+    "1m": 21,
+    "3m": 63,
+    "6m": 126,
+    "ytd": None,
+    "1y": 252,
+    "all": None,
+}
+
+
+def rolling_metrics(
+    returns: pd.Series,
+    windows: tuple[int, ...] = ROLLING_WINDOWS,
+    risk_free: pd.Series | float = 0.0,
+) -> dict[str, Any]:
     r = _clean(returns)
+    excess = _excess(r, risk_free)
     out: dict[str, Any] = {}
     for window in windows:
         if len(r) < window:
@@ -244,10 +266,93 @@ def rolling_metrics(returns: pd.Series, windows: tuple[int, ...] = (30, 90, 252)
             out[f"sharpe_{window}d"] = None
             continue
         rolled = r.rolling(window)
+        rolled_excess = excess.rolling(window)
         vol = rolled.std(ddof=1) * np.sqrt(TRADING_DAYS)
-        sharpe_series = rolled.mean() / rolled.std(ddof=1) * np.sqrt(TRADING_DAYS)
+        sharpe_series = rolled_excess.mean() / rolled_excess.std(ddof=1) * np.sqrt(TRADING_DAYS)
         out[f"vol_{window}d"] = _series_payload(vol)
         out[f"sharpe_{window}d"] = _series_payload(sharpe_series)
+    return out
+
+
+def rolling_beta(portfolio: pd.Series, benchmark: pd.Series, window: int) -> dict[str, Any] | None:
+    """
+    Rolling OLS slope by cov/var, which is what OLS reduces to for one
+    regressor. Plotted over time it shows whether the portfolio's market
+    sensitivity today is the same one the since-inception figure describes.
+    """
+    joined = pd.concat([_clean(portfolio), _clean(benchmark)], axis=1, keys=["p", "b"]).dropna()
+    if len(joined) < window:
+        return None
+    cov = joined["p"].rolling(window).cov(joined["b"])
+    var = joined["b"].rolling(window).var(ddof=1)
+    beta = (cov / var).replace([np.inf, -np.inf], np.nan)
+    return _series_payload(beta)
+
+
+def _window_slice(r: pd.Series, key: str) -> pd.Series:
+    n = TRAILING_WINDOWS[key]
+    if key == "ytd":
+        if r.empty:
+            return r
+        year_start = pd.Timestamp(year=r.index[-1].year, month=1, day=1)
+        return r[r.index >= year_start]
+    if n is None:
+        return r
+    return r.tail(n)
+
+
+def window_pack(
+    returns: pd.Series,
+    benchmarks: dict[str, pd.Series],
+    risk_free: pd.Series | float = 0.0,
+) -> dict[str, Any]:
+    """
+    The §7.4 table for each trailing window. A since-inception Sharpe describes
+    the portfolio's whole life; the owner wants to know what it is doing now,
+    so every figure is available over 1M / 3M / 6M / YTD / 1Y as well.
+
+    Regressions need MIN_OBSERVATIONS, so the 1M window carries descriptive
+    statistics only and says so, rather than reporting a beta fitted on 21
+    points.
+    """
+    r = _clean(returns)
+    out: dict[str, Any] = {}
+    for key in TRAILING_WINDOWS:
+        w = _window_slice(r, key)
+        if w.empty:
+            out[key] = {"status": "insufficient", "observations": 0}
+            continue
+        dd = max_drawdown(w)
+        start = w.index[0]
+        entry: dict[str, Any] = {
+            "status": "ok",
+            "observations": int(len(w)),
+            "from": str(start)[:10],
+            "to": str(w.index[-1])[:10],
+            "cumulative_return": float((1 + w).prod() - 1),
+            "annualised_return": annualised_return(w),
+            "annualised_volatility": annualised_volatility(w),
+            "sharpe": sharpe(w, risk_free),
+            "sortino": sortino(w, risk_free),
+            "max_drawdown": asdict(dd),
+            "benchmarks": {},
+        }
+        for name, series in benchmarks.items():
+            b = _clean(series)
+            b = b[(b.index >= start) & (b.index <= w.index[-1])]
+            reg = regress(w, b, risk_free)
+            entry["benchmarks"][name] = {
+                "regression": reg.to_dict() if reg else None,
+                "regression_note": None
+                if reg
+                else f"needs {MIN_OBSERVATIONS} overlapping observations; this window has {len(w)}",
+                "tracking_error": tracking_error(w, b),
+                "information_ratio": information_ratio(w, b),
+                "benchmark_cumulative_return": float((1 + b.reindex(w.index).dropna()).prod() - 1)
+                if len(b)
+                else None,
+            }
+        out[key] = entry
     return out
 
 
@@ -288,7 +393,9 @@ def risk_pack(
             "worst_day": float(r.min()) if len(r) else None,
             "positive_days_pct": float((r > 0).mean()) if len(r) else None,
         },
-        "rolling": rolling_metrics(r),
+        "rolling": rolling_metrics(r, risk_free=risk_free),
+        "rolling_windows": list(ROLLING_WINDOWS),
+        "windows": window_pack(r, benchmarks, risk_free),
         "benchmarks": {},
     }
 
@@ -301,6 +408,8 @@ def risk_pack(
             "capture": up_down_capture(r, series),
             "benchmark_annualised_return": annualised_return(series),
             "benchmark_annualised_volatility": annualised_volatility(series),
+            "rolling_beta_63d": rolling_beta(r, series, 63),
+            "rolling_beta_126d": rolling_beta(r, series, 126),
         }
 
     return pack

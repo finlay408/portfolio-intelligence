@@ -19,6 +19,7 @@ import {
   Tr,
   WeightBar,
 } from '@/components/ui/primitives';
+import { AllocationDonut } from '@/components/allocation-donut';
 import { percent, money, number as fmtNumber } from '@/lib/format';
 import { getAnalytics, getOverview } from '@/lib/portfolio';
 import type { ConcentrationSummary } from '@/lib/engine/concentration';
@@ -174,32 +175,43 @@ function WeightTable({
       {summary.rows.length === 0 ? (
         <Empty>No holdings.</Empty>
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              <Th>Bucket</Th>
-              <Th align="right">Value</Th>
-              <Th align="right">Weight</Th>
-              <Th className="w-24" />
-            </tr>
-          </thead>
-          <tbody>
-            {summary.rows.map((r) => (
-              <Tr key={r.key}>
-                <Td>{r.label}</Td>
-                <Td align="right" numeric>
-                  {money(r.valueGbp)}
-                </Td>
-                <Td align="right" numeric>
-                  {percent(r.weight, 1)}
-                </Td>
-                <Td>
-                  <WeightBar value={r.weight.toNumber()} />
-                </Td>
-              </Tr>
-            ))}
-          </tbody>
-        </Table>
+        <>
+          <AllocationDonut
+            rows={summary.rows.map((r) => ({ key: r.key, label: r.label, weight: r.weight.toNumber() }))}
+          />
+          <details className="group border-t border-line">
+            <summary className="cursor-pointer select-none px-4 py-2 text-[11px] text-muted hover:text-ink">
+              <span className="group-open:hidden">Show all {summary.rows.length} rows with values</span>
+              <span className="hidden group-open:inline">Hide rows</span>
+            </summary>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Bucket</Th>
+                  <Th align="right">Value</Th>
+                  <Th align="right">Weight</Th>
+                  <Th className="w-20 sm:w-24" />
+                </tr>
+              </thead>
+              <tbody>
+                {summary.rows.map((r) => (
+                  <Tr key={r.key}>
+                    <Td>{r.label}</Td>
+                    <Td align="right" numeric>
+                      {money(r.valueGbp)}
+                    </Td>
+                    <Td align="right" numeric>
+                      {percent(r.weight, 1)}
+                    </Td>
+                    <Td>
+                      <WeightBar value={r.weight.toNumber()} />
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </details>
+        </>
       )}
     </Card>
   );

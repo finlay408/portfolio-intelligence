@@ -147,6 +147,52 @@ stored as `asset_class = 'equity'` by the importer, and Yahoo has no fund data
 for it — an ETC holds bars, not holdings. Fix by hand if wanted:
 `--export`, put `Alternatives:1` in its `sector_weights` cell, `--apply`.
 
+## Trailing windows and charts (added 3 September 2026)
+
+The owner asked for three things: more charts, figures that describe the
+portfolio *now* rather than since inception, and a phone-first layout. What
+was built, and where:
+
+- **Windows.** `src/lib/engine/windows.ts` slices the TWR series to
+  1M/3M/6M/YTD/1Y/All (trading-day counts 21/63/126/252), rebases it, aligns
+  benchmark price levels onto the portfolio's dates, and summarises the
+  window. The overview, risk and attribution pages read `?window=` (default
+  `3m`) and every headline figure on them is for that window. Since-inception
+  is the `All` window — it did not go away.
+- **Python side.** `risk_pack` now writes `windows[<key>]` (descriptives plus
+  a regression per benchmark, `regression_note` when the window is too short),
+  `rolling_beta_63d/126d` per benchmark, and rolling windows changed from
+  30/90/252 to 21/63/126/252 so they match. Payloads written before this have
+  no `windows` key; `windowRegression()` in `src/lib/analytics-types.ts` falls
+  back to since-inception and the UI labels it.
+- **Benchmark levels come from `prices_daily` + FX at request time**
+  (`getMarketContext` in `portfolio.ts`), not from the nightly payload, so the
+  "you vs the index" figure is as current as the last recompute. Regressions
+  still come from the nightly job. Both dates are printed on the card.
+- **Charts** (`src/components/`): `performance-chart` (portfolio vs S&P 500
+  GBP and USD, rebased, drawdown beneath), `value-chart` (value vs cumulative
+  deposits), `rolling-chart` (small multiples of vol/Sharpe/beta),
+  `distribution-chart` (daily-return histogram with the 95% loss marked),
+  `calendar-bar-chart` (monthly/quarterly vs benchmark), `allocation-donut`
+  (monochrome by design, §12), `interval-bar` (alpha and beta as a range with
+  a zero line — this replaces "−0.3% ± 15.1%" as the primary presentation),
+  `contributors` (diverging bars).
+- **Mobile.** `mobile-nav.tsx`: a fixed bottom bar with Overview / Positions /
+  Attribution / Risk and a "More" sheet for the rest; the header row is the
+  desktop nav. Holdings on the overview are a card list under `md`. Wide
+  tables hide secondary columns under `sm`. `.pb-safe`/`.pt-safe` handle the
+  iOS home indicator when installed to the Home Screen.
+
+Two traps found while doing it:
+
+- **Grid children need `min-w-0`.** A grid item defaults to `min-width:auto`,
+  so a wrapper div holding a `whitespace-nowrap` table grew past the viewport
+  on a phone and every card in that column was clipped. Cards themselves are
+  `overflow-hidden` and immune; plain wrapper divs are not.
+- **The Browser pane's mobile emulation returns blank screenshots once the
+  page is scrolled.** Use a custom tall viewport (`resize_window` 400×3000)
+  to see a whole phone page in one capture instead.
+
 ## Non-obvious decisions already made
 
 - **Attribution is chain-linked by growth factor**, not Cariño-smoothed:

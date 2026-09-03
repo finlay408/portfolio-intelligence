@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
+import { BottomNav, HeaderNav, type NavItem } from '@/components/mobile-nav';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -38,11 +39,16 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-const NAV = [
-  { href: '/', label: 'Overview' },
-  { href: '/positions', label: 'Positions' },
-  { href: '/attribution', label: 'Attribution' },
-  { href: '/risk', label: 'Risk' },
+/**
+ * `primary` marks the four pages that earn a slot on the phone's bottom bar;
+ * everything else sits behind "More". On a desktop the whole list is the
+ * header row.
+ */
+const NAV: NavItem[] = [
+  { href: '/', label: 'Overview', primary: true },
+  { href: '/positions', label: 'Positions', primary: true },
+  { href: '/attribution', label: 'Attribution', short: 'Attrib.', primary: true },
+  { href: '/risk', label: 'Risk', primary: true },
   { href: '/rrg', label: 'Rotation' },
   { href: '/exposure', label: 'Exposure' },
   { href: '/trades', label: 'Trades' },
@@ -56,26 +62,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en-GB">
       <body className="min-h-screen">
-        <header className="sticky top-0 z-30 border-b border-line bg-canvas/90 backdrop-blur">
-          <div className="mx-auto flex max-w-[1600px] items-center gap-6 px-4 py-2">
+        <header className="pt-safe sticky top-0 z-30 border-b border-line bg-canvas/90 backdrop-blur">
+          <div className="mx-auto flex max-w-[1600px] items-center gap-4 px-3 py-2 md:gap-6 md:px-4">
             <Link href="/" className="text-[13px] font-semibold tracking-tight">
               Portfolio<span className="text-muted"> Intelligence</span>
             </Link>
-            <nav className="flex items-center gap-1 overflow-x-auto">
-              {NAV.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="rounded px-2 py-1 text-[12px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+            <HeaderNav items={NAV} />
             <span className="ml-auto text-[11px] text-muted">GBP</span>
           </div>
         </header>
-        <main className="mx-auto max-w-[1600px] px-4 py-4">{children}</main>
+        <main className="mx-auto max-w-[1600px] px-3 py-3 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:px-4 md:py-4 md:pb-6">
+          {children}
+        </main>
+        <BottomNav items={NAV} />
       </body>
     </html>
   );

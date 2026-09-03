@@ -4,12 +4,26 @@
  * Each grid reconciles to the total portfolio return. The reconciliation gap is
  * printed rather than hidden — a grid that does not add up is a broken grid,
  * and the only way to know is to show the residual.
+ *
+ * The grids honour the same trailing window as the overview, so "what drove
+ * the last quarter" and "what drove everything" are one page apart, not two
+ * different tools.
  */
-import { Card, Empty, Note, Table, Td, Th, Tr, WeightBar } from '@/components/ui/primitives';
+import { Card, Empty, Note, Table, Td, Th, Tr } from '@/components/ui/primitives';
+import { CalendarBarChart } from '@/components/calendar-bar-chart';
+import { Contributors } from '@/components/contributors';
+import { WindowPicker } from '@/components/window-picker';
 import { Decimal, ZERO } from '@/lib/decimal';
-import { directionClass, money, percent } from '@/lib/format';
-import { RESIDUAL_KEY, type AttributionResult } from '@/lib/engine/attribution';
-import { getAttribution, getOverview } from '@/lib/portfolio';
+import { monthKey, quarterKey } from '@/lib/dates';
+import { directionClass, money, percent, shortDate } from '@/lib/format';
+import { RESIDUAL_KEY, rankContributors, type AttributionResult } from '@/lib/engine/attribution';
+import {
+  parseWindow,
+  periodReturnsFromLevels,
+  summariseWindow,
+  windowSpec,
+} from '@/lib/engine/windows';
+import { getAttribution, getMarketContext, getOverview } from '@/lib/portfolio';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +40,18 @@ const GRID_LABELS: Record<string, { title: string; subtitle?: string }> = {
   assetClass: { title: 'By asset class' },
 };
 
-export default async function AttributionPage() {
-  const [attribution, overview] = await Promise.all([getAttribution(), getOverview()]);
+export default async function AttributionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ window?: string | string[] }>;
+}) {
+  const window = parseWindow((await searchParams).window);
+  const spec = windowSpec(window);
+
+  const [overview, market] = await Promise.all([getOverview(), getMarketContext('SPX')]);
+  const inputs = { benchmarks: market.benchmark?.levels ?? {}, riskFreeDaily: market.riskFreeDaily };
+  const summary = summariseWindow(overview.twr.series, window, inputs);
+  const attribution = await getAttribution(undefined, summary.from ?? undefined);
 
   if (attribution.needsRecompute) {
     return (
@@ -39,31 +63,103 @@ export default async function AttributionPage() {
     );
   }
 
+  const gbp = market.benchmark ? summary.benchmarks[market.benchmark.gbpLabel] : undefined;
+  const ranked = rankContributors(attribution.grids.position!, 8);
+  const toRows = (rows: Array<[string, { total: Decimal }]>) =>
+    rows
+      .filter(([k]) => k !== RESIDUAL_KEY)
+      .map(([k, p]) => ({
+        key: k,
+        label: attribution.labels.get(k) ?? k,
+        value: p.total.toNumber(),
+        href: `/positions/${k}`,
+      }));
+
+  // Benchmark calendar returns over the periods the portfolio has, so the bars pair up.
+  const benchLevels = market.benchmark ? market.benchmark.levels[market.benchmark.gbpLabel]! : [];
+  const inWindow = benchLevels.filter((p) => (!summary.from || p.date >= summary.from) && (!summary.to || p.date <= summary.to));
+  const benchMonths = new Map(periodReturnsFromLevels(inWindow, monthKey).map((r) => [r.period, r.ret]));
+  const benchQuarters = new Map(periodReturnsFromLevels(inWindow, quarterKey).map((r) => [r.period, r.ret]));
+  const monthlyRows = attribution.months.map((m) => ({
+    period: m.period,
+    portfolio: m.ret.toNumber(),
+    benchmark: benchMonths.get(m.period) ?? null,
+  }));
+  const quarterlyRows = attribution.quarters.map((q) => ({
+    period: q.period,
+    portfolio: q.ret.toNumber(),
+    benchmark: benchQuarters.get(q.period) ?? null,
+  }));
+
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <WindowPicker current={window} basePath="/attribution" />
+        <span className="text-[11px] text-muted">
+          {shortDate(attribution.from)} – {shortDate(attribution.to)} · {attribution.days} trading days
+        </span>
+      </div>
+
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line md:grid-cols-4">
         <Cell
-          label="Total return (TWR)"
+          label={`Total return · ${spec.label}`}
           value={percent(attribution.totalReturn, 2, { signed: true })}
-          sub={`${attribution.days} trading days`}
+          sub="time-weighted, chain-linked"
+          tone={directionClass(attribution.totalReturn)}
+        />
+        <Cell
+          label="S&P 500 (GBP)"
+          value={percent(gbp?.ret, 2, { signed: true })}
+          sub={
+            gbp?.active === null || gbp?.active === undefined
+              ? 'same window'
+              : `you ${gbp.active >= 0 ? 'beat' : 'trailed'} it by ${Math.abs(gbp.active * 100).toFixed(1)} pts`
+          }
+          tone={directionClass(gbp?.ret)}
         />
         <Cell
           label="Money-weighted (XIRR)"
           value={overview.mwr === null ? '—' : percent(overview.mwr, 2, { signed: true })}
-          sub="annualised, reflects contribution timing"
-        />
-        <Cell
-          label="Net deposits"
-          value={money(overview.netDepositsGbp)}
-          sub="the capital at work"
+          sub="annualised, since inception"
         />
         <Cell
           label="Reconciliation gap"
-          value={attribution.grids.position!.reconciliationGap.abs().lessThan('1e-12')
-            ? 'exact'
-            : percent(attribution.grids.position!.reconciliationGap, 6)}
+          value={
+            attribution.grids.position!.reconciliationGap.abs().lessThan('1e-12')
+              ? 'exact'
+              : percent(attribution.grids.position!.reconciliationGap, 6)
+          }
           sub="grid total vs compounded return"
         />
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <Card
+          title="Biggest contributors"
+          subtitle={`top and bottom positions over the ${spec.label} window`}
+          footnote="Contribution is weight × return on each day, chain-linked across the window. It is the position's share of the portfolio return, not the position's own return."
+        >
+          <Contributors
+            rows={[
+              ...toRows(ranked.top),
+              ...toRows(ranked.bottom).filter((b) => !ranked.top.some(([k]) => k === b.key)).reverse(),
+            ]}
+          />
+        </Card>
+
+        <Card
+          title="Monthly returns"
+          subtitle="portfolio beside the S&P 500 in GBP"
+          footnote="Compounded within each month. The first month of a window may be partial, and the benchmark bar for it is measured over the same days."
+        >
+          <CalendarBarChart rows={monthlyRows} benchmarkLabel={market.benchmark?.gbpLabel ?? null} />
+          {quarterlyRows.length > 1 && (
+            <div className="border-t border-line">
+              <div className="px-4 pt-2 text-[10px] uppercase tracking-wide text-muted">Quarterly</div>
+              <CalendarBarChart rows={quarterlyRows} benchmarkLabel={market.benchmark?.gbpLabel ?? null} />
+            </div>
+          )}
+        </Card>
       </div>
 
       <Note>
@@ -104,11 +200,21 @@ export default async function AttributionPage() {
   );
 }
 
-function Cell({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function Cell({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: string;
+}) {
   return (
     <div className="bg-surface px-3 py-2.5">
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
-      <div className="tabular mt-1 text-xl leading-none">{value}</div>
+      <div className={`tabular mt-1 text-xl leading-none ${tone ?? ''}`}>{value}</div>
       {sub && <div className="mt-1 text-[11px] text-ink-2">{sub}</div>}
     </div>
   );
@@ -151,9 +257,9 @@ function Grid({
             <tr>
               <Th>Bucket</Th>
               <Th align="right">Contribution</Th>
-              {showFx && <Th align="right">Asset</Th>}
-              {showFx && <Th align="right">FX</Th>}
-              <Th className="w-32" />
+              {showFx && <Th align="right" className="hidden sm:table-cell">Asset</Th>}
+              {showFx && <Th align="right" className="hidden sm:table-cell">FX</Th>}
+              <Th className="w-24 sm:w-32" />
             </tr>
           </thead>
           <tbody>
@@ -172,12 +278,12 @@ function Grid({
                   {percent(parts.total, 2, { signed: true })}
                 </Td>
                 {showFx && (
-                  <Td align="right" numeric className={directionClass(parts.asset)}>
+                  <Td align="right" numeric className={`hidden sm:table-cell ${directionClass(parts.asset)}`}>
                     {percent(parts.asset, 2, { signed: true })}
                   </Td>
                 )}
                 {showFx && (
-                  <Td align="right" numeric className={directionClass(parts.fx)}>
+                  <Td align="right" numeric className={`hidden sm:table-cell ${directionClass(parts.fx)}`}>
                     {parts.fx.isZero() ? '—' : percent(parts.fx, 2, { signed: true })}
                   </Td>
                 )}
@@ -198,7 +304,7 @@ function ContributionBar({ value, max }: { value: Decimal; max: Decimal }) {
   const magnitude = max.isZero() ? 0 : value.abs().div(max).toNumber();
   const positive = value.greaterThanOrEqualTo(0);
   return (
-    <div className="flex h-1.5 w-28 items-center">
+    <div className="flex h-1.5 w-20 items-center sm:w-28">
       <div className="flex h-full w-1/2 justify-end">
         {!positive && (
           <div className="h-full rounded-l-full bg-down/70" style={{ width: `${magnitude * 100}%` }} />

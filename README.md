@@ -96,6 +96,7 @@ src/lib/engine/     the analytics engine — pure functions, no I/O
   snapshots.ts        ledger → daily series (the recompute definition)
   twr.ts  xirr.ts     time- and money-weighted return
   attribution.ts      chain-linked contribution, exact to floating point
+  windows.ts          trailing windows (1M…All), benchmark alignment, window stats
   concentration.ts    HHI, effective N, correlation clustering
   valuation.ts        market value and the GBP return decomposition
   greeks.ts           Black-Scholes and portfolio Greek aggregation
@@ -148,6 +149,38 @@ TWR neutralises deposit timing and is the only correct basis for comparison agai
 (XIRR) is what your capital actually earned. With regular auto-invest they diverge materially.
 Showing one without the other is the most common analytical error in retail portfolio tools, so
 the overview shows both, side by side, always labelled.
+
+---
+
+## Trailing windows: the figures describe now, not inception
+
+A since-inception Sharpe ratio describes the portfolio's whole life. The
+overview, the risk page and the attribution page therefore lead with a
+selectable trailing window — **1M · 3M · 6M · YTD · 1Y · All** — carried in the
+URL as `?window=3m` (the default). Windows are counted in trading days
+(21 / 63 / 126 / 252) so a "3M" is the same number of returns in any month and
+matches the rolling windows the Python job produces.
+
+Two sources feed a window, and the page says which is which:
+
+| Figure | Where it is computed | Freshness |
+|---|---|---|
+| Return, volatility, Sharpe, Sortino, max drawdown, best/worst day, "vs S&P 500" | `src/lib/engine/windows.ts` on the cached TWR series, at request time | as of the last `recompute` |
+| Alpha, beta, R², tracking error, information ratio, rolling beta | `analytics/risk.py` → `analytics_snapshots.risk.windows[<key>]` | as of the last nightly job |
+
+The S&P 500 comparison aligns the benchmark's price levels onto the
+portfolio's dates by carrying the last close forward, because the two do not
+share a calendar (the portfolio has a snapshot on the August bank holiday; SPY
+does not trade on Thanksgiving). Both the GBP-translated and the USD series
+are shown (§3.3).
+
+A window with fewer than 20 returns withholds its annualised figures, and one
+with fewer than 30 has no regression — the page says so rather than printing
+a beta fitted on a fortnight.
+
+Alpha is drawn as an interval, not written as "−0.3% ± 15.1%": the dot is the
+estimate and the band is the 95% range. If the band crosses zero, the sign of
+alpha is not known, and the page says that in words.
 
 ---
 
@@ -263,6 +296,7 @@ pure function of its inputs — which is the whole reason it is written that way
 | | Section 104: same-day matching, the 30-day bed-and-breakfast rule, and three different realised figures from one ledger (£2,350 / £3,100 / £2,850) |
 | `attribution.test.ts` | every grid reconciles to total return — to 1e-20, not to 1bp |
 | `pipeline.test.ts` | ledger → snapshots → TWR → attribution, including that recompute-from-inception is deterministic and window-independent |
+| `windows.test.ts` | trailing-window slicing and rebasing, YTD anchoring, benchmark alignment across calendars, window statistics |
 | `gbx.test.ts` | pence conversion in both directions, and the mis-configuration detector |
 | `xirr.test.ts` | convergence on pathological flows: near-total loss, a huge late deposit, alternating signs |
 | `greeks.test.ts` | Black-Scholes against Hull's worked example and the standard ATM reference |

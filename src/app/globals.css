@@ -74,3 +74,28 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line-strong) transparent;
 }
+
+/* Horizontal nav rows scroll on a phone but never show a bar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* iOS safe areas: the bottom bar sits above the home indicator, the header
+   below the notch, when the app is installed to the Home Screen. */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Recharts wrappers should never trap a vertical scroll on touch. */
+.recharts-wrapper {
+  touch-action: pan-y;
+}
+.recharts-surface {
+  overflow: visible;
+}
