@@ -80,10 +80,14 @@ These each cost real time. They are in memory too, but repeating them here:
 
 **Ordered by what actually matters.**
 
-1. **GitHub Secrets are not set**, so no scheduled job has ever run in CI.
-   Needs `DATABASE_URL`, `CRON_SECRET` (both in `.env`) and `APP_URL` (the
-   Vercel URL, no trailing slash). Until then quotes, EOD bars, corporate
-   actions, auto-invest and the nightly analytics only run when invoked by hand.
+1. **GitHub Secrets were set on 3 September 2026** (`DATABASE_URL`,
+   `CRON_SECRET`, `APP_URL`, `FRED_API_KEY`, `FINNHUB_API_KEY`; not Alpaca or
+   Alpha Vantage), so the schedules should now run. Check the Actions tab after
+   the first night. The quote jobs call the Vercel app, which sits behind
+   Deployment Protection, so they also need `VERCEL_AUTOMATION_BYPASS_SECRET`:
+   Vercel project → Settings → Deployment Protection → Protection Bypass for
+   Automation → generate, then paste the value as a repository secret. The
+   workflow sends it as the `x-vercel-protection-bypass` header.
 
 2. **Themes are empty.** No data source can supply them. `classification.csv`
    has a `themes` column (`"Defence:0.7;Photonics:0.3"`), then

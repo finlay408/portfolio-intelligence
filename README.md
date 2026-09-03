@@ -259,7 +259,10 @@ current limits before relying on them either way.
   round-trip through Vercel.
 
 Repository secrets needed: `DATABASE_URL`, `APP_URL`, `CRON_SECRET`, and whichever provider keys
-you have.
+you have. Because the app sits behind Vercel Deployment Protection, the quote jobs also need
+`VERCEL_AUTOMATION_BYPASS_SECRET` — generate it under the Vercel project's Deployment Protection
+settings ("Protection Bypass for Automation"); the workflow sends it as the
+`x-vercel-protection-bypass` header.
 
 The weekly **integrity check** recomputes every snapshot from inception and diffs it against the
 cache, failing the workflow on any mismatch over a penny. It is not optional — it is what catches

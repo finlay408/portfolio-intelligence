@@ -61,14 +61,19 @@ jobs:
       - name: Refresh quotes
         run: |
           set -euo pipefail
+          # Deployment Protection sits in front of every route, so the call
+          # also carries Vercel's Protection Bypass for Automation token.
+          # Without it the SSO page answers with a 401 before the route runs.
           status=$(curl -sS -o /tmp/body.json -w '%{http_code}' \
             -H "Authorization: Bearer $CRON_SECRET" \
+            -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
             "$APP_URL/api/cron/quotes?market=${{ steps.market.outputs.market }}")
           cat /tmp/body.json
           test "$status" = "200"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
   eod:
     if: github.event.schedule == '30 22 * * 1-5' || inputs.job == 'eod-bars'
