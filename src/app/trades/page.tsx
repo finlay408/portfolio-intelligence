@@ -11,18 +11,24 @@ import Link from 'next/link';
 import { db } from '@/db';
 import { accounts, cashFlows, instruments, trades } from '@/db/schema';
 import { Badge, Card, Empty, Table, Td, Th, Tr } from '@/components/ui/primitives';
+import { ImportForm } from '@/components/import-form';
 import { TradeForm } from '@/components/trade-form';
 import { VoidButton } from '@/components/void-button';
 import { dec } from '@/lib/decimal';
 import { todayIso } from '@/lib/dates';
-import { directionClass, money, quantity, shortDate } from '@/lib/format';
+import { directionClass, money, quantity, relativeTime, shortDate } from '@/lib/format';
+import { listUploads } from '@/lib/import/apply';
 
 export const dynamic = 'force-dynamic';
+// A commit fetches price history for new instruments and rebuilds the cached
+// series in-process; the default 10s would cut that short.
+export const maxDuration = 60;
 
 export default async function TradesPage() {
-  const [instrumentRows, accountRows, tradeRows, flowRows] = await Promise.all([
+  const [instrumentRows, accountRows, uploads, tradeRows, flowRows] = await Promise.all([
     db.select().from(instruments).orderBy(instruments.symbol),
     db.select().from(accounts).orderBy(accounts.id),
+    listUploads(12),
     db
       .select({
         trade: trades,
@@ -42,16 +48,76 @@ export default async function TradesPage() {
       .limit(100),
   ]);
 
+  const accountOptions = accountRows.map((a) => ({ id: a.id, name: a.name, wrapper: a.wrapper }));
+
   return (
     <div className="space-y-3">
       <Card
+        title="Upload a broker export"
+        subtitle="Trading 212 → History → Export, any date range, overlaps are fine"
+        footnote="Every row is matched against the ledger by the broker's transaction ID, so re-uploading a range you already imported records nothing twice. Nothing is written until you commit the preview."
+      >
+        <ImportForm accounts={accountOptions} />
+      </Card>
+
+      {uploads.length > 0 && (
+        <Card title="Uploads" subtitle={`${uploads.length} most recent`}>
+          <Table>
+            <thead>
+              <tr>
+                <Th>File</Th>
+                <Th>Uploaded</Th>
+                <Th align="right">Rows</Th>
+                <Th>Status</Th>
+                <Th>Wrote</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {uploads.map((u) => {
+                const result = (u.summary?.result ?? null) as
+                  | { written?: { trades: number; flows: number; instruments: number } }
+                  | null;
+                return (
+                  <Tr key={u.id}>
+                    <Td>
+                      <span className="font-mono text-[11px]">{u.filename}</span>
+                    </Td>
+                    <Td>
+                      <span className="text-[11px] text-muted">{relativeTime(u.uploadedAt)}</span>
+                    </Td>
+                    <Td align="right" numeric>
+                      {u.rowCount}
+                    </Td>
+                    <Td>
+                      {u.appliedAt ? (
+                        <Badge tone="up">committed</Badge>
+                      ) : (
+                        <Badge tone="neutral">previewed only</Badge>
+                      )}
+                    </Td>
+                    <Td>
+                      <span className="text-[11px] text-muted">
+                        {result?.written
+                          ? `${result.written.trades} trades · ${result.written.flows} flows · ${result.written.instruments} instruments`
+                          : '—'}
+                      </span>
+                    </Td>
+                  </Tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </Card>
+      )}
+
+      <Card
         title="Record a trade"
-        subtitle="the only manual input this system needs"
+        subtitle="for anything the export does not carry"
         footnote="Cached time series are rebuilt by `npm run recompute`; positions on every page update immediately, because they are derived from this ledger on read."
       >
         <TradeForm
           today={todayIso()}
-          accounts={accountRows.map((a) => ({ id: a.id, name: a.name, wrapper: a.wrapper }))}
+          accounts={accountOptions}
           instruments={instrumentRows.map((i) => ({
             id: i.id,
             symbol: i.symbol,

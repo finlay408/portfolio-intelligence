@@ -15,6 +15,13 @@
       "when": 1788387396547,
       "tag": "0001_fund_sector_weights",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788532463275,
+      "tag": "0002_import_uploads",
+      "breakpoints": true
     }
   ]
 }

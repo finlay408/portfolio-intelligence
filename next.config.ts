@@ -3,6 +3,9 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // A year of Trading 212 history is ~200 KB; the default 1 MB action body
+  // would reject a multi-year export.
+  experimental: { serverActions: { bodySizeLimit: '10mb' } },
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
   // Both drivers must stay outside the bundle: postgres.js uses dynamic

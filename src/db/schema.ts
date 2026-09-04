@@ -27,6 +27,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -133,6 +134,12 @@ export const trades = pgTable(
     source: text('source').notNull().default('manual'), // manual|auto_invest|import
     ruleId: integer('rule_id'), // set when source = 'auto_invest'
     note: text('note'),
+    /**
+     * The broker's own transaction ID when the row came from an export upload.
+     * It is what makes re-uploading an overlapping export idempotent: the same
+     * fill can never be recorded twice, however many files it appears in.
+     */
+    externalId: text('external_id'),
     /** Corrections: void, never delete. */
     isVoid: boolean('is_void').notNull().default(false),
     voidedBy: bigint('voided_by', { mode: 'number' }),
@@ -142,6 +149,9 @@ export const trades = pgTable(
     index('trades_acct_inst_date_idx').on(t.accountId, t.instrumentId, t.tradeDate),
     check('trades_quantity_positive', sql`${t.quantity} > 0`),
     check('trades_side_valid', sql`${t.side} in ('buy','sell')`),
+    uniqueIndex('trades_external_id_idx')
+      .on(t.accountId, t.externalId)
+      .where(sql`${t.externalId} is not null`),
   ],
 );
 
@@ -161,8 +171,15 @@ export const cashFlows = pgTable('cash_flows', {
   /** US dividends: 15% with a W-8BEN on file. */
   withholding: numeric('withholding').notNull().default('0'),
   note: text('note'),
+  /** Broker transaction ID for uploaded rows; see `trades.externalId`. */
+  externalId: text('external_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+},
+(t) => [
+  uniqueIndex('cash_flows_external_id_idx')
+    .on(t.accountId, t.externalId)
+    .where(sql`${t.externalId} is not null`),
+]);
 
 export const autoInvestRules = pgTable('auto_invest_rules', {
   id: serial('id').primaryKey(),
@@ -439,6 +456,32 @@ export const dataHealth = pgTable(
   (t) => [index('data_health_occurred_idx').on(t.occurredAt)],
 );
 
+/**
+ * Every broker export that has been uploaded, kept verbatim.
+ *
+ * The ledger is the source of truth (§2), but the export is the source of the
+ * ledger, and keeping it means any row can be traced back to the broker's own
+ * statement. It also makes the two-step upload (preview, then commit) possible
+ * on a serverless host, where nothing survives between requests but the
+ * database.
+ */
+export const importFiles = pgTable('import_files', {
+  id: serial('id').primaryKey(),
+  accountId: integer('account_id')
+    .notNull()
+    .references(() => accounts.id),
+  broker: text('broker').notNull().default('trading212'),
+  filename: text('filename').notNull(),
+  /** Hex SHA-256 of the content; the same file uploaded twice is one row. */
+  sha256: text('sha256').notNull(),
+  content: text('content').notNull(),
+  rowCount: integer('row_count').notNull(),
+  uploadedAt: timestamp('uploaded_at', { withTimezone: true }).notNull().defaultNow(),
+  appliedAt: timestamp('applied_at', { withTimezone: true }),
+  /** What the commit wrote: counts, problems, new instruments. */
+  summary: jsonb('summary').$type<Record<string, unknown>>(),
+}, (t) => [unique('import_files_sha256_key').on(t.accountId, t.sha256)]);
+
 export const jobRuns = pgTable('job_runs', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   job: text('job').notNull(),
@@ -457,3 +500,4 @@ export type CorporateAction = typeof corporateActions.$inferSelect;
 export type PriceDaily = typeof pricesDaily.$inferSelect;
 export type FxRateDaily = typeof fxRatesDaily.$inferSelect;
 export type AutoInvestRule = typeof autoInvestRules.$inferSelect;
+export type ImportFile = typeof importFiles.$inferSelect;

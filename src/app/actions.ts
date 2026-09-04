@@ -16,6 +16,13 @@ import { cashFlows, corporateActions, instruments, trades, watchlist } from '@/d
 import { requireOwner } from '@/lib/auth';
 import { dec } from '@/lib/decimal';
 import { stampDutyFor } from '@/lib/engine/auto-invest';
+import {
+  commitUpload,
+  previewUpload,
+  storeUpload,
+  type ImportPreview,
+  type ImportResult,
+} from '@/lib/import/apply';
 
 export interface ActionResult {
   ok: boolean;
@@ -270,4 +277,105 @@ export async function removeFromWatchlist(
   await db.delete(watchlist).where(eq(watchlist.id, id));
   revalidatePath('/watchlist');
   return { ok: true, message: 'Removed.' };
+}
+
+/* ---------------- broker export upload ---------------- */
+
+export interface ImportActionState extends ActionResult {
+  previews?: ImportPreview[];
+  results?: ImportResult[];
+}
+
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Step one: store the export and show what it would do. Nothing touches the
+ * ledger here — the preview is computed against it, not written to it.
+ */
+export async function uploadExport(
+  _prev: ImportActionState | null,
+  form: FormData,
+): Promise<ImportActionState> {
+  await requireOwner();
+  const accountId = Number(form.get('accountId'));
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return { ok: false, message: 'pick an account' };
+  }
+  const files = form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { ok: false, message: 'choose at least one export file' };
+
+  const previews: ImportPreview[] = [];
+  const notes: string[] = [];
+  for (const file of files.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      notes.push(`${file.name}: larger than 8 MB — export a shorter date range`);
+      continue;
+    }
+    try {
+      const { fileId, existing } = await storeUpload({
+        accountId,
+        filename: file.name,
+        text: await file.text(),
+      });
+      const preview = await previewUpload(fileId);
+      previews.push(preview);
+      if (existing) notes.push(`${file.name}: this exact file was uploaded before`);
+    } catch (err) {
+      notes.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  revalidatePath('/trades');
+  if (previews.length === 0) return { ok: false, message: notes.join(' · ') || 'nothing to import' };
+  const totalNew = previews.reduce((n, p) => n + p.trades.new + p.flows.new, 0);
+  return {
+    ok: true,
+    message:
+      (totalNew === 0
+        ? 'Everything in this export is already recorded.'
+        : `${totalNew} new rows found. Review below, then commit.`) +
+      (notes.length ? ` (${notes.join(' · ')})` : ''),
+    previews,
+  };
+}
+
+/** Step two: write the new rows, price anything new, rebuild the cache. */
+export async function commitExport(
+  _prev: ImportActionState | null,
+  form: FormData,
+): Promise<ImportActionState> {
+  await requireOwner();
+  const ids = String(form.get('fileIds') ?? '')
+    .split(',')
+    .map((v) => Number(v.trim()))
+    .filter((v) => Number.isInteger(v) && v > 0);
+  if (ids.length === 0) return { ok: false, message: 'nothing to commit' };
+
+  const results: ImportResult[] = [];
+  const failures: string[] = [];
+  // Oldest file first, so a later file's duplicate check sees the earlier
+  // file's rows already in the ledger.
+  for (const id of ids.sort((a, b) => a - b)) {
+    try {
+      results.push(await commitUpload(id));
+    } catch (err) {
+      failures.push(`upload ${id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  for (const path of ['/', '/trades', '/positions', '/attribution', '/risk', '/exposure']) {
+    revalidatePath(path);
+  }
+
+  const wrote = results.reduce(
+    (acc, r) => ({ trades: acc.trades + r.written.trades, flows: acc.flows + r.written.flows }),
+    { trades: 0, flows: 0 },
+  );
+  const recomputeFailed = results.filter((r) => !r.recompute.ok);
+  const parts = [`Recorded ${wrote.trades} trades and ${wrote.flows} cash flows.`];
+  if (recomputeFailed.length > 0) {
+    parts.push('The cached series could not be rebuilt in-app; the nightly job will do it.');
+  }
+  if (failures.length > 0) parts.push(failures.join(' · '));
+  return { ok: failures.length === 0, message: parts.join(' '), results };
 }

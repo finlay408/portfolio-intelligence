@@ -194,7 +194,7 @@ alpha is not known, and the page says that in words.
 | `npm run db:generate` | generate a migration after a schema change |
 | `npm run seed` | the golden portfolio; `-- --demo-prices` to map real tickers |
 | `npm run import -- --file=x.csv --dry-run` | load a portfolio from CSV; creates instruments from tickers |
-| `npm run import:t212 -- --dir=./exports --resolve` | import a Trading 212 export; resolves tickers by ISIN |
+| `npm run import:t212 -- --dir=./exports --dry-run` | the Trading 212 upload, from the command line |
 | `npm run enrich` | sector, industry, country and fund look-through, keyless |
 | `npm run enrich -- --funds` | re-read ETF sector splits from their holdings |
 | `npm run seed:benchmarks` | install the S&P 500 / FTSE 100 / ACWI proxies |
@@ -334,9 +334,47 @@ Once you start entering your own trades, delete the fixture rows and add instrum
 
 ## Putting your own portfolio in
 
+### Trading 212: upload the export
+
+Trading 212 → History → Export, any date range, then **Trades → Upload a
+broker export** in the app. Pick the file (or several), press Preview, read
+the numbers, press Commit. That is the whole routine, and it is the intended
+way to keep the ledger current: export the last month whenever you like and
+upload it.
+
+What the preview shows, and why each figure is there:
+
+- **New trades / new cash flows** — what the commit would write.
+- **Already recorded** — rows matched to the ledger. Every uploaded row keeps
+  the broker's own transaction ID, so an overlapping date range records
+  nothing twice. Rows imported before IDs were kept are matched on instrument,
+  date, side, quantity and price instead.
+- **New instruments** — securities the ledger has never seen, resolved against
+  Yahoo by ISIN and currency. `BA` on Trading 212 is BAE Systems, not Boeing,
+  which is why the ticker is never trusted on its own. A line Yahoo quotes in
+  a different currency, or cannot find at all, is flagged rather than guessed.
+- **Trades checked against the broker's GBP totals** — every trade is
+  recomputed from quantity × price × rate and compared with the export's own
+  `Total`. A disagreement over 2% is listed. This is what catches an inverted
+  exchange rate, which is the format's one genuinely dangerous trap.
+
+Commit writes the rows, creates and classifies any new instruments (sector,
+industry, listing country, fund look-through), fetches their price history,
+and rebuilds the cached series from the earliest new date. Positions on every
+page are correct the instant the rows land, because they derive from the
+ledger on read. Revenue geography for a new equity stays blank — see
+Classification below.
+
+Every upload is kept verbatim in `import_files`, so any row in the ledger can
+be traced back to the statement it came from. The same command-line path is
+`npm run import:t212 -- --dir=./exports --dry-run`, then without the flag.
+
+### Anything else: the generic CSV
+
 There is no "add instrument" screen — the trade form only offers instruments
 that already exist. That is fine once you are running (you add a holding
-rarely) but useless for loading an existing portfolio, so use the importer.
+rarely) but useless for loading an existing portfolio from another broker, so
+use the importer.
 
 Copy `portfolio-template.csv`, fill it in, and:
 

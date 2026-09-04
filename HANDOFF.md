@@ -69,7 +69,7 @@ These each cost real time. They are in memory too, but repeating them here:
 | File | What it is |
 |---|---|
 | `.env` | `DATABASE_URL`, `CRON_SECRET`, `AUTH_MODE=development` |
-| `t212-instruments.csv` | ticker → Yahoo symbol map, 138 rows, all verified |
+| `t212-instruments.csv` | old ticker → Yahoo symbol map; no longer read by anything |
 | `classification.csv` | sector/geography/themes, applied; themes still blank |
 | `public/source-icon.jpeg` | the cow photo behind the app icon |
 | `.env.pglite-offline.bak` | restore as `.env.local` for offline mode |
@@ -214,7 +214,43 @@ Two traps found while doing it:
   as a point estimate — on 800 observations it lands 34% from truth while beta
   is accurate to 1%.
 
-## Trading 212 specifics (in `scripts/import-t212.ts`)
+## Trading 212 upload (added 4 September 2026)
+
+The owner asked to stop hand-loading exports. **Trades → Upload a broker
+export** now takes the raw `from_*.csv` files: store → preview → commit, in
+`src/lib/import/apply.ts`, with the format itself in `src/lib/import/t212.ts`
+and symbol resolution in `src/lib/import/resolve.ts`. The CLI
+(`npm run import:t212`) is a thin wrapper over the same three calls, and the
+old `--resolve` step and `t212-instruments.csv` are no longer used.
+
+What made it safe against the live ledger:
+
+- **`external_id` on `trades` and `cash_flows`** (migration `0002`, applied to
+  Neon on 4 September). New rows carry the broker's ID; a partial unique index
+  per account makes a double insert impossible. Dividends have no broker ID
+  and get a key built from every identifying field.
+- **The 1,007 + 391 existing rows have no ID.** They are matched by natural
+  key — instrument, date, side, quantity, price for trades; instrument, date,
+  kind, amount, currency for flows — as a multiset, so two identical fills on
+  one day need two ledger rows to both count as recorded. Numeric strings go
+  through Decimal first: the export says `1.1217948700`, Postgres says
+  `1.12179487`. Verified offline: both real exports re-run against a PGlite
+  copy of production give 0 new rows, with IDs stored and with IDs stripped.
+- **Securities match by ISIN + quote currency**, never ticker. All 138 lines
+  in the real exports matched existing instruments. A new line is resolved
+  against Yahoo (`TICKER.L` first for GBX/GBP, ISIN search after), created
+  with sector/industry/country and a fund look-through, and priced from a
+  week before its first trade. Tested with `RR` + Rolls-Royce's ISIN, which
+  correctly became `RR.L` in pence alongside the existing Richtech `RR`.
+- **Commit rebuilds the cache in-process** via `src/lib/engine/recompute.ts`
+  (extracted from the script) from the earliest new date; `maxDuration = 60`
+  on the trades page covers it. If it fails, the result says so and the
+  22:30 UTC eod job rebuilds anyway. Uploads are kept verbatim in
+  `import_files` and logged in `job_runs` as `import-upload`.
+- `experimental.serverActions.bodySizeLimit` is 10 MB; a year of history is
+  about 200 KB.
+
+## Trading 212 specifics (in `src/lib/import/t212.ts`)
 
 Four traps, all verified against the real export before writing:
 
@@ -242,10 +278,9 @@ python analytics/run_nightly.py         # risk pack
 npm run integrity-check                 # must report 0 mismatches
 ```
 
-Adding a holding: record the trade in the UI if the instrument exists,
-otherwise `npm run import -- --file=x.csv` (creates instruments from tickers),
-then `npm run enrich` — or `npm run enrich -- --funds` if it is an ETF and
-nothing else changed.
+Adding trades: export the period from Trading 212 and upload it on the Trades
+page. New instruments are created, classified and priced by the commit; only
+revenue geography still needs `npm run enrich -- --export` / `--apply`.
 
 `npm test && npm run typecheck && python analytics/test_analytics.py` before any
 commit.
