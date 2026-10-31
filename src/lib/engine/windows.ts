@@ -143,6 +143,14 @@ export interface BenchmarkWindow {
   ret: number | null;
   /** Portfolio return minus benchmark return — the plain-language comparison. */
   active: number | null;
+  /**
+   * The benchmark's own risk figures over the same dates, so every portfolio
+   * figure on the overview can sit beside the index's equivalent.
+   */
+  volatility: number | null;
+  sharpe: number | null;
+  /** Deepest peak-to-trough fall of the benchmark in the window, as a negative fraction. */
+  maxDrawdown: number | null;
 }
 
 export interface WindowSummary {
@@ -197,13 +205,27 @@ export function summariseWindow(
 
   const benchmarks: Record<string, BenchmarkWindow> = {};
   for (const [name, levels] of Object.entries(inputs.benchmarks ?? {})) {
-    const { cumulative } = levelsToCumulative(alignLevels(dates, levels));
+    const { cumulative, dailyReturn } = levelsToCumulative(alignLevels(dates, levels));
     const last = cumulative.at(-1) ?? null;
     const first = cumulative[0] ?? null;
     const ret = last === null || first === null ? null : last / first - 1;
+
+    // The same risk-free rate the portfolio's Sharpe uses, day for day.
+    const benchReturns: number[] = [];
+    const benchRf: number[] = [];
+    dailyReturn.forEach((r, i) => {
+      if (r === null) return;
+      benchReturns.push(r);
+      benchRf.push(inputs.riskFreeDaily?.get(dates[i]!) ?? 0);
+    });
+    const benchEnough = benchReturns.length >= MIN_OBSERVATIONS_FOR_ANNUALISED;
+
     benchmarks[name] = {
       ret,
       active: ret === null || portfolioReturn === null ? null : portfolioReturn.toNumber() - ret,
+      volatility: benchReturns.length >= 2 ? finiteOrNull(annualisedVolatility(benchReturns)) : null,
+      sharpe: benchEnough ? finiteOrNull(sharpe(benchReturns, benchRf)) : null,
+      maxDrawdown: levelDrawdown(cumulative),
     };
   }
 
@@ -226,6 +248,19 @@ export function summariseWindow(
     var95: enough ? finiteOrNull(percentile(returns, 0.05)) : null,
     benchmarks,
   };
+}
+
+/** Deepest fall from a running peak in a cumulative-growth series, or null if it never starts. */
+function levelDrawdown(cumulative: Array<number | null>): number | null {
+  let peak: number | null = null;
+  let worst: number | null = null;
+  for (const v of cumulative) {
+    if (v === null) continue;
+    peak = peak === null ? v : Math.max(peak, v);
+    const dd = v / peak - 1;
+    worst = worst === null ? dd : Math.min(worst, dd);
+  }
+  return worst;
 }
 
 /* ---------------- Chart series ---------------- */

@@ -624,6 +624,44 @@ export async function getUpcomingEarnings(days = 30) {
     .limit(20);
 }
 
+export interface MacroTile {
+  id: string;
+  latest: number | null;
+  latestDate: IsoDate | null;
+  /** Change against the observation roughly a month earlier. */
+  change: number | null;
+  /** Recent observations, oldest first, for a sparkline. */
+  recent: number[];
+}
+
+/**
+ * The latest reading of each FRED series, with its one-month change and a
+ * short history for a sparkline. Series have different frequencies, so "a
+ * month" is 21 observations back, as on the macro page.
+ */
+export async function getMacroTiles(ids: string[], points = 63): Promise<MacroTile[]> {
+  const since = addDays(todayIso(), -Math.ceil(points * 1.6));
+  const rows = await db
+    .select({ id: macroSeries.seriesId, date: macroSeries.obsDate, value: macroSeries.value })
+    .from(macroSeries)
+    .where(and(inArray(macroSeries.seriesId, ids), gte(macroSeries.obsDate, since)))
+    .orderBy(asc(macroSeries.obsDate));
+
+  return ids.map((id) => {
+    const series = rows.filter((r) => r.id === id && r.value !== null);
+    const values = series.map((r) => Number(r.value));
+    const latest = values.at(-1) ?? null;
+    const previous = values.length > 1 ? values[Math.max(0, values.length - 22)]! : null;
+    return {
+      id,
+      latest,
+      latestDate: series.at(-1)?.date ?? null,
+      change: latest === null || previous === null ? null : latest - previous,
+      recent: values.slice(-points),
+    };
+  });
+}
+
 export async function getWatchlist() {
   const rows = await db
     .select({

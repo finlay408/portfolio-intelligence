@@ -126,6 +126,25 @@ describe('window summary', () => {
     expect(summary.benchmarks.SPX!.active).toBeCloseTo(pr - br, 12);
   });
 
+  it('gives the benchmark its own volatility, Sharpe and drawdown over the same dates', () => {
+    const s = seriesOf(Array(40).fill(0.002));
+    // Up 10%, down to 99, back up: the peak-to-trough is 99 / 110 - 1.
+    const path = [100, 105, 110, 104, 99, 101, ...Array(35).fill(0).map((_, i) => 101 + i * 0.5)];
+    const bench = s.map((p, i) => ({ date: p.date, level: path[i]! }));
+    const b = summariseWindow(s, 'all', { benchmarks: { SPX: bench } }).benchmarks.SPX!;
+    expect(b.maxDrawdown).toBeCloseTo(99 / 110 - 1, 12);
+    expect(b.volatility).toBeGreaterThan(0);
+    expect(b.sharpe).not.toBeNull();
+  });
+
+  it('withholds the benchmark Sharpe on too few observations', () => {
+    const s = seriesOf(Array(10).fill(0.002));
+    const bench = s.map((p, i) => ({ date: p.date, level: 100 + i }));
+    const b = summariseWindow(s, 'all', { benchmarks: { SPX: bench } }).benchmarks.SPX!;
+    expect(b.sharpe).toBeNull();
+    expect(b.maxDrawdown).toBe(0);
+  });
+
   it('withholds annualised figures on too few observations', () => {
     const s = seriesOf(Array(10).fill(0.002));
     const summary = summariseWindow(s, '3m');

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { Space_Grotesk } from 'next/font/google';
 import Link from 'next/link';
 import { BottomNav, HeaderNav, type NavItem } from '@/components/mobile-nav';
 import './globals.css';
@@ -58,9 +59,16 @@ const NAV: NavItem[] = [
   { href: '/data-health', label: 'Data' },
 ];
 
+/**
+ * The overview's display face. Self-hosted by next/font at build time, so the
+ * page makes no request to Google at runtime. Exposed as a CSS variable and
+ * used only where `font-display` is asked for; the tables keep the system face.
+ */
+const display = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk', display: 'swap' });
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-GB">
+    <html lang="en-GB" className={display.variable}>
       <body className="min-h-screen">
         <header className="pt-safe sticky top-0 z-30 border-b border-line bg-canvas/90 backdrop-blur">
           <div className="mx-auto flex max-w-[1600px] items-center gap-4 px-3 py-2 md:gap-6 md:px-4">

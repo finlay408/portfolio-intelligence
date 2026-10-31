@@ -13,15 +13,24 @@ export function WindowPicker({
   current,
   basePath,
   className,
+  size = 'compact',
 }: {
   current: WindowKey;
   basePath: string;
   className?: string;
+  /** `full` stretches across the row with thumb-sized segments, for the phone overview. */
+  size?: 'compact' | 'full';
 }) {
+  const full = size === 'full';
   return (
     <nav
       aria-label="Performance window"
-      className={cn('inline-flex rounded-md border border-line bg-surface p-0.5', className)}
+      className={cn(
+        full
+          ? 'flex rounded-xl bg-surface p-1'
+          : 'inline-flex rounded-md border border-line bg-surface p-0.5',
+        className,
+      )}
     >
       {WINDOWS.map((w) => (
         <Link
@@ -31,9 +40,14 @@ export function WindowPicker({
           title={w.description}
           aria-current={w.key === current ? 'true' : undefined}
           className={cn(
-            'rounded px-2.5 py-1 text-[11px] font-medium transition-colors sm:px-3',
+            'font-medium transition-colors',
+            full
+              ? 'flex h-9 flex-1 items-center justify-center rounded-lg text-[13px]'
+              : 'rounded px-2.5 py-1 text-[11px] sm:px-3',
             w.key === current
-              ? 'bg-surface-2 text-ink'
+              ? full
+                ? 'bg-ink text-canvas'
+                : 'bg-surface-2 text-ink'
               : 'text-muted hover:text-ink',
           )}
         >
