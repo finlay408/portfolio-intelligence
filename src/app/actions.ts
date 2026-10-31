@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { db } from '@/db';
-import { cashFlows, corporateActions, instruments, trades, watchlist } from '@/db/schema';
+import { cashFlows, corporateActions, instruments, trades } from '@/db/schema';
 import { requireOwner } from '@/lib/auth';
 import { dec } from '@/lib/decimal';
 import { stampDutyFor } from '@/lib/engine/auto-invest';
@@ -234,51 +234,6 @@ export async function confirmAction(
   };
 }
 
-const watchlistSchema = z.object({
-  instrumentId: z.coerce.number().int().positive(),
-  thesis: optionalText,
-  targetEntry: optionalDecimal,
-  conviction: blankToUndefined(z.coerce.number().int().min(1).max(5).optional()),
-  alertAbove: optionalDecimal,
-  alertBelow: optionalDecimal,
-});
-
-export async function addToWatchlist(
-  _prev: ActionResult | null,
-  form: FormData,
-): Promise<ActionResult> {
-  await requireOwner();
-  const parsed = watchlistSchema.safeParse(Object.fromEntries(form));
-  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? 'invalid' };
-  const input = parsed.data;
-
-  await db
-    .insert(watchlist)
-    .values({
-      instrumentId: input.instrumentId,
-      thesis: input.thesis ?? null,
-      targetEntry: input.targetEntry ?? null,
-      conviction: input.conviction ?? null,
-      alertAbove: input.alertAbove ?? null,
-      alertBelow: input.alertBelow ?? null,
-    })
-    .onConflictDoNothing();
-
-  revalidatePath('/watchlist');
-  return { ok: true, message: 'Added to the watchlist.' };
-}
-
-export async function removeFromWatchlist(
-  _prev: ActionResult | null,
-  form: FormData,
-): Promise<ActionResult> {
-  await requireOwner();
-  const id = Number(form.get('id'));
-  await db.delete(watchlist).where(eq(watchlist.id, id));
-  revalidatePath('/watchlist');
-  return { ok: true, message: 'Removed.' };
-}
-
 /* ---------------- broker export upload ---------------- */
 
 export interface ImportActionState extends ActionResult {
@@ -363,7 +318,7 @@ export async function commitExport(
     }
   }
 
-  for (const path of ['/', '/trades', '/positions', '/attribution', '/risk', '/exposure']) {
+  for (const path of ['/', '/trades', '/positions', '/attribution', '/risk']) {
     revalidatePath(path);
   }
 

@@ -13,12 +13,11 @@
  * shown (beta carries its range); stale data is still flagged.
  */
 import Link from 'next/link';
-import type { ReactNode } from 'react';
 import { Badge, Empty, FreshnessBadge, Note, Table, Td, Th, Tr, WeightBar, cn } from '@/components/ui/primitives';
 import { Contributors } from '@/components/contributors';
-import { ScoreChart, ScoreLegend } from '@/components/score-chart';
-import { Sparkline } from '@/components/sparkline';
+import { JumpLinks, MacroCard, RaceCard, Section, Tile, VersusBar } from '@/components/scoreboard';
 import { WindowPicker } from '@/components/window-picker';
+import { MACRO_HEADLINE, QUADRANTS, quadrantMoves } from '@/lib/market-views';
 import type { RrgSeries } from '@/components/rrg-chart';
 import { SPX_GBP, windowRegression, type RiskPayload, type VarPayload } from '@/lib/analytics-types';
 import { RESIDUAL_KEY, rankContributors } from '@/lib/engine/attribution';
@@ -37,39 +36,6 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-/** Percentage-point difference, e.g. "+1.8 pts". */
-const pts = (v: number | null | undefined) =>
-  v === null || v === undefined || !Number.isFinite(v)
-    ? '—'
-    : `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)} pts`;
-
-/**
- * The macro tiles. `upIsBad` colours a move by what it does to this
- * portfolio rather than by its sign: a rising VIX or 10-year yield is a
- * headwind for equities, and a stronger pound shrinks every dollar holding.
- */
-const MACRO: Array<{ id: string; label: string; unit: string; decimals: number; upIsBad: boolean | null }> = [
-  { id: 'VIXCLS', label: 'VIX', unit: '', decimals: 1, upIsBad: true },
-  { id: 'DGS10', label: 'US 10-year', unit: '%', decimals: 2, upIsBad: true },
-  { id: 'DEXUSUK', label: 'GBP/USD', unit: '', decimals: 3, upIsBad: true },
-  { id: 'IUDSOIA', label: 'SONIA', unit: '%', decimals: 2, upIsBad: null },
-];
-
-type Quadrant = RrgSeries['quadrant'];
-
-const QUADRANTS: Array<{ key: Quadrant; label: string; tone: string; fill: string }> = [
-  { key: 'leading', label: 'Leading', tone: 'text-up', fill: 'bg-up/10' },
-  { key: 'weakening', label: 'Weakening', tone: 'text-warn', fill: 'bg-warn/10' },
-  { key: 'lagging', label: 'Lagging', tone: 'text-down', fill: 'bg-down/10' },
-  { key: 'improving', label: 'Improving', tone: 'text-accent', fill: 'bg-accent/10' },
-];
-
-/** Which quadrant a single RRG point sits in; 100/100 is the crosshair. */
-function quadrantOf(p: { rs_ratio: number; rs_momentum: number }): Quadrant {
-  if (p.rs_ratio >= 100) return p.rs_momentum >= 100 ? 'leading' : 'weakening';
-  return p.rs_momentum >= 100 ? 'improving' : 'lagging';
-}
-
 export default async function OverviewPage({
   searchParams,
 }: {
@@ -84,7 +50,7 @@ export default async function OverviewPage({
     getAnalytics<RiskPayload>('risk'),
     getAnalytics<VarPayload>('var'),
     getAnalytics<{ status: string; series: RrgSeries[] }>('rrg'),
-    getMacroTiles(MACRO.map((m) => m.id)),
+    getMacroTiles(MACRO_HEADLINE.map((m) => m.id)),
     getPendingActions(),
     getUpcomingEarnings(),
   ]);
@@ -144,13 +110,11 @@ export default async function OverviewPage({
 
   // ---- rotation ----
   const rotation = rrg?.payload.status === 'ok' ? rrg.payload.series.filter((s) => s.tail.length > 0) : [];
-  const moved = rotation
-    .map((s) => {
-      const now = quadrantOf(s.tail.at(-1)!);
-      const before = s.tail.length > 1 ? quadrantOf(s.tail.at(-2)!) : now;
-      return now === before ? null : { label: s.label, now };
-    })
-    .filter((m): m is { label: string; now: Quadrant } => m !== null);
+  const moved = quadrantMoves(rotation);
+
+  // Earnings for what you hold now, not for every instrument ever traded.
+  const held = new Set(overview.holdings.map((h) => h.position.instrumentId));
+  const heldEarnings = earnings.filter((e) => held.has(e.event.instrumentId));
 
   // ---- freshness ----
   const quoted = overview.holdings.filter((h) => h.quote);
@@ -175,10 +139,13 @@ export default async function OverviewPage({
       <section className="space-y-1.5 pt-1">
         <div className="flex items-center justify-between">
           <span className="text-[12px] text-muted">{overview.accountName}</span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink-2">
+          <Link
+            href="/data-health"
+            className="inline-flex items-center gap-1.5 rounded-full bg-surface px-2.5 py-1 text-[11px] text-ink-2"
+          >
             <span className={cn('h-1.5 w-1.5 rounded-full', stale ? 'bg-warn' : 'bg-up')} />
             {stale ? 'Some closing prices' : delayed ? 'Live · LSE delayed' : 'Live'}
-          </span>
+          </Link>
         </div>
         <Link href="/positions" className="block">
           <div className="text-[44px] font-semibold leading-none tracking-tight sm:text-[52px]">
@@ -203,20 +170,15 @@ export default async function OverviewPage({
       <WindowPicker current={window} basePath="/" size="full" />
 
       {/* ---- the race: you against the S&P 500 in pounds ---- */}
-      <section className="space-y-3 rounded-2xl bg-surface p-4">
-        <div className="flex items-baseline justify-between">
-          <ScoreLegend marketLabel="S&P 500 £" />
-          <span className={cn('text-[14px] font-semibold', directionClass(vsMarket?.active))}>
-            {pts(vsMarket?.active)}
-          </span>
-        </div>
-        <ScoreChart data={chartData} marketLabel="S&P 500 £" />
-        <div className="grid grid-cols-3 gap-2">
-          <Figure label={`TWR · ${spec.label}`} value={percent(summary.ret, 1, { signed: true })} tone={directionClass(summary.ret)} href="/attribution" />
-          <Figure label="MWR · all" value={percent(overview.mwr, 1, { signed: true })} tone={directionClass(overview.mwr)} href="/attribution" />
-          <Figure label={`S&P £ · ${spec.label}`} value={percent(vsMarket?.ret, 1, { signed: true })} tone="text-ink-2" />
-        </div>
-      </section>
+      <RaceCard
+        data={chartData}
+        windowLabel={spec.label}
+        ret={summary.ret}
+        mwr={overview.mwr}
+        marketRet={vsMarket?.ret}
+        active={vsMarket?.active}
+        href="/attribution"
+      />
 
       {/* ---- the four numbers that say how it is doing it ---- */}
       <section className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
@@ -258,7 +220,7 @@ export default async function OverviewPage({
           label="Effective N"
           value={effectiveN === null ? '—' : effectiveN.toFixed(1)}
           sub={<span className={concentrated ? 'text-warn' : undefined}>of {overview.concentration.count} holdings</span>}
-          href="/exposure"
+          href="/positions#exposure"
         />
       </section>
 
@@ -269,19 +231,15 @@ export default async function OverviewPage({
       )}
 
       {/* ---- jump links ---- */}
-      <nav aria-label="Sections" className="no-scrollbar -mx-3 flex gap-2 overflow-x-auto px-3 md:hidden">
-        {[
+      <JumpLinks
+        items={[
           ['#risk', 'Risk'],
           ['#moves', 'What moved'],
           ['#rotation', 'Rotation'],
           ['#macro', 'Macro'],
           ['#holdings', 'Holdings'],
-        ].map(([href, label]) => (
-          <a key={href} href={href} className="shrink-0 rounded-full bg-surface px-3.5 py-2 text-[13px] text-ink">
-            {label}
-          </a>
-        ))}
-      </nav>
+        ]}
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* ---- risk ---- */}
@@ -346,7 +304,7 @@ export default async function OverviewPage({
         </Section>
 
         {/* ---- rotation ---- */}
-        <Section id="rotation" title="Rotation vs S&P" href="/rrg" meta={rrg ? `weekly · ${shortDate(rrg.snapDate)}` : undefined}>
+        <Section id="rotation" title="Rotation vs S&P" href="/markets#rotation" meta={rrg ? `weekly · ${shortDate(rrg.snapDate)}` : undefined}>
           {rotation.length === 0 ? (
             <Empty>Needs about seven months of weekly prices.</Empty>
           ) : (
@@ -379,36 +337,11 @@ export default async function OverviewPage({
         </Section>
 
         {/* ---- macro ---- */}
-        <Section id="macro" title="Macro" href="/macro" meta="~1 month change">
+        <Section id="macro" title="Macro" href="/markets#macro" meta="~1 month change">
           <div className="grid grid-cols-2 gap-2">
-            {MACRO.map((spec) => {
-              const tile = macro.find((t) => t.id === spec.id)!;
-              // A move too small to show at this precision is no move.
-              const change =
-                tile.change !== null && Math.abs(tile.change) >= 0.5 * 10 ** -spec.decimals ? tile.change : null;
-              const tone =
-                change === null || change === 0 || spec.upIsBad === null
-                  ? 'text-muted'
-                  : (change > 0) === spec.upIsBad
-                    ? 'text-down'
-                    : 'text-up';
-              return (
-                <div key={spec.id} className="rounded-xl bg-surface-2/60 p-3">
-                  <div className="text-[12px] text-muted">{spec.label}</div>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[20px] font-semibold">
-                      {tile.latest === null ? '—' : `${tile.latest.toFixed(spec.decimals)}${spec.unit}`}
-                    </span>
-                    <span className={cn('text-[12px]', tone)}>
-                      {change === null || change === 0
-                        ? '—'
-                        : `${change > 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(spec.decimals)}`}
-                    </span>
-                  </div>
-                  <Sparkline values={tile.recent} className="mt-1" />
-                </div>
-              );
-            })}
+            {MACRO_HEADLINE.map((spec) => (
+              <MacroCard key={spec.id} spec={spec} tile={macro.find((t) => t.id === spec.id)!} />
+            ))}
           </div>
         </Section>
       </div>
@@ -452,10 +385,10 @@ export default async function OverviewPage({
         )}
       </Section>
 
-      {earnings.length > 0 && (
+      {heldEarnings.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[12px]">
           <span className="text-muted">Earnings</span>
-          {earnings.slice(0, 6).map((e) => (
+          {heldEarnings.slice(0, 6).map((e) => (
             <span key={e.event.id}>
               <span className="font-medium">{e.symbol}</span>{' '}
               <span className="text-muted">{shortDate(e.event.reportDate)}</span>
@@ -463,96 +396,6 @@ export default async function OverviewPage({
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-/* ---------------- building blocks ---------------- */
-
-function Section({
-  id,
-  title,
-  href,
-  meta,
-  children,
-}: {
-  id: string;
-  title: string;
-  href: string;
-  meta?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section id={id} className="scroll-mt-16 space-y-3.5 rounded-2xl bg-surface p-4">
-      <header className="flex items-baseline justify-between gap-3">
-        <Link href={href} className="text-[17px] font-semibold hover:text-accent">
-          {title} <span className="text-muted">›</span>
-        </Link>
-        {meta && <span className="truncate text-[11px] text-muted">{meta}</span>}
-      </header>
-      {children}
-    </section>
-  );
-}
-
-function Figure({ label, value, tone, href }: { label: string; value: string; tone: string; href?: string }) {
-  const body = (
-    <>
-      <div className="text-[11px] tracking-wide text-muted">{label}</div>
-      <div className={cn('text-[20px] font-semibold', tone)}>{value}</div>
-    </>
-  );
-  return href ? <Link href={href}>{body}</Link> : <div>{body}</div>;
-}
-
-function Tile({
-  label,
-  value,
-  valueTone,
-  sub,
-  href,
-}: {
-  label: string;
-  value: string;
-  valueTone?: string;
-  sub: ReactNode;
-  href: string;
-}) {
-  return (
-    <Link href={href} className="flex flex-col gap-1 rounded-2xl bg-surface p-3.5 active:bg-surface-2">
-      <span className="text-[12px] text-muted">{label}</span>
-      <span className={cn('text-[28px] font-semibold leading-tight tracking-tight', valueTone)}>{value}</span>
-      <span className="text-[12px] text-ink-2">{sub}</span>
-    </Link>
-  );
-}
-
-/** You as a bar, the index as a tick on the same scale. */
-function VersusBar({
-  label,
-  you,
-  market,
-  scale,
-}: {
-  label: string;
-  you: number | null;
-  market: number | null;
-  /** The value that fills the whole bar. */
-  scale: number;
-}) {
-  const pos = (v: number) => `${Math.min(100, (Math.abs(v) / scale) * 100)}%`;
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-[12px] text-ink-2">
-        <span>{label}</span>
-        <span>
-          {percent(you, 1)} <span className="text-muted">vs S&amp;P</span> {percent(market, 1)}
-        </span>
-      </div>
-      <div className="relative h-2 rounded-full bg-surface-2">
-        {you !== null && <div className="absolute inset-y-0 left-0 rounded-full bg-ink" style={{ width: pos(you) }} />}
-        {market !== null && <div className="absolute -top-1 h-4 w-0.5 bg-accent" style={{ left: pos(market) }} />}
-      </div>
     </div>
   );
 }

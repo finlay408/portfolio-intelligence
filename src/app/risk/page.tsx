@@ -1,48 +1,32 @@
 /**
- * The risk pack (CLAUDE.md §7.4-§7.10).
+ * Risk (CLAUDE.md §7.4-§7.10), as figures rather than tables.
  *
- * Descriptive figures for the selected window are computed here from the
- * cached TWR series, so they are as current as the last recompute. Anything
- * statistical — regressions, VaR, factors, scenarios, liquidity — is read from
+ * Window descriptives are computed here from the cached TWR series, each beside
+ * the S&P 500's own figure over the same days. Anything statistical —
+ * regressions, VaR, factors, scenarios, liquidity — is read from
  * `analytics_snapshots`, written by the nightly Python job, and carries its
- * computation date so a stale pack is visible rather than assumed current.
+ * date in the section's meta line so a stale pack is visible.
  *
- * Two presentation rules the brief insists on and this page implements:
- *   - alpha and beta appear with their standard errors and R², never as bare
- *     point estimates;
- *   - scenario results are labelled as estimates, in the panel, not in a
- *     footnote nobody reads.
+ * The brief's presentation rules still hold, in fewer words: alpha and beta
+ * always carry their 95% range, scenario figures are labelled as estimates,
+ * and VaR is withheld rather than guessed when history is short.
  */
-import {
-  Badge,
-  Card,
-  Empty,
-  Insufficient,
-  Note,
-  Stat,
-  Table,
-  Td,
-  Th,
-  Tr,
-} from '@/components/ui/primitives';
+import { Empty, Insufficient, Note, cn } from '@/components/ui/primitives';
+import { Contributors } from '@/components/contributors';
 import { DistributionChart } from '@/components/distribution-chart';
 import { IntervalBar } from '@/components/interval-bar';
 import { RollingChart, type RollingSeries } from '@/components/rolling-chart';
-import { WindowPicker } from '@/components/window-picker';
+import { JumpLinks, PageHead, Section, Tile } from '@/components/scoreboard';
 import {
   SPX_GBP,
+  SPX_LOCAL,
+  windowRegression,
   type RiskPayload,
   type VarPayload,
   type WindowBenchmarkStats,
 } from '@/lib/analytics-types';
-import {
-  histogram,
-  parseWindow,
-  summariseWindow,
-  windowReturns,
-  windowSpec,
-} from '@/lib/engine/windows';
-import { estimate, money, number as fmtNumber, percent, shortDate } from '@/lib/format';
+import { histogram, parseWindow, summariseWindow, windowReturns, windowSpec } from '@/lib/engine/windows';
+import { money, percent, shortDate } from '@/lib/format';
 import { getAnalytics, getMarketContext, getOverview } from '@/lib/portfolio';
 
 export const dynamic = 'force-dynamic';
@@ -70,8 +54,6 @@ interface ScenarioPayload {
     status: string;
     modelled_return?: number;
     modelled_pnl_gbp?: number;
-    modelled_trough?: number;
-    portfolio_beta?: number;
     benchmark_return?: number;
   }>;
   shocks: Record<string, { modelled_return: number; modelled_pnl_gbp: number }>;
@@ -84,24 +66,22 @@ interface LiquidityPayload {
   positions: Array<{
     instrument_id: number;
     symbol: string | null;
-    exchange_mic: string | null;
     value_gbp: number;
-    adv_20d: number | null;
     days_to_liquidate: Record<string, number | null>;
     flagged: boolean;
-    unknown_liquidity: boolean;
   }>;
-  caveat: string;
 }
 
-/** A VaR figure is always a loss, so it is rendered negative regardless of the
- *  sign convention the method returned it in. */
-function loss(gbp: number | undefined): string {
-  return gbp === undefined ? '—' : money(-Math.abs(gbp));
-}
+/** A VaR figure is always a loss, whatever sign the method returned it in. */
+const loss = (gbp: number | undefined | null) => (gbp === undefined || gbp === null ? null : -Math.abs(gbp));
 
-const benchmarkName = (key: string) =>
-  key.replace('_gbp', ' (GBP)').replace('_local', ' (local)').replace('SPX', 'S&P 500');
+const signedMoney = (v: number) => `${v > 0 ? '+' : ''}${money(v)}`;
+
+/** 'gbpusd_up_10' → 'GBP/USD up 10'. The keys come from analytics/scenarios.py. */
+const shockLabel = (key: string) => {
+  const words = key.replace(/_/g, ' ').replace(/^gbpusd/, 'GBP/USD').replace(/^vix/, 'VIX');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
 
 export default async function RiskPage({
   searchParams,
@@ -121,488 +101,387 @@ export default async function RiskPage({
     getAnalytics<LiquidityPayload>('liquidity'),
   ]);
 
-  const inputs = { benchmarks: market.benchmark?.levels ?? {}, riskFreeDaily: market.riskFreeDaily };
+  const bench = market.benchmark;
+  const inputs = { benchmarks: bench?.levels ?? {}, riskFreeDaily: market.riskFreeDaily };
   const summary = summariseWindow(overview.twr.series, window, inputs);
+  const vsMarket = bench ? summary.benchmarks[bench.gbpLabel] : undefined;
   const returns = windowReturns(overview.twr.series, window);
   const bins = histogram(returns, Math.min(24, Math.max(8, Math.round(returns.length / 6))));
+  const symbolOf = (id: number) => overview.instrumentById.get(id)?.symbol ?? `#${id}`;
 
-  const symbolOf = (id: number) =>
-    overview.holdings.find((h) => h.position.instrumentId === id)?.symbol ?? `#${id}`;
+  const regression = windowRegression(risk?.payload, window, SPX_GBP);
+  const r = regression?.regression;
 
-  // The window's regressions from the nightly job, falling back to since
-  // inception (and saying so) when the payload predates windows or the window
-  // is too short to fit.
+  // ---- VaR ----
+  const varOk = varPack?.payload.status === 'ok' ? varPack.payload : null;
+  // Keyed by confidence ('95', '99') then horizon ('1d', '10d') in analytics/var.py.
+  const historical = (conf: string, horizon: string) => varOk?.methods?.[conf]?.[horizon]?.var.historical?.gbp;
+  const var95 = loss(varOk?.primary?.var_95_1d_gbp);
+  const cvar95 = loss(varOk?.primary?.cvar_95_1d_gbp);
+  const var99 = loss(historical('99', '1d'));
+  const var95_10 = loss(historical('95', '10d'));
+  const windowVar = summary.var95 === null ? null : summary.var95 * overview.totalValueGbp.toNumber();
+
+  const tail =
+    varPack?.payload.component?.status === 'ok'
+      ? [...varPack.payload.component.positions!].sort((a, b) => (b.share_of_var ?? 0) - (a.share_of_var ?? 0))
+      : [];
+
+  // ---- the benchmark comparisons, window first, inception if the window cannot fit ----
   const windowStats = risk?.payload.windows?.[window];
-  const benchmarkRows: Array<[string, WindowBenchmarkStats | null, 'window' | 'inception']> = risk
-    ? windowStats && windowStats.status === 'ok'
-      ? Object.entries(windowStats.benchmarks).map(([k, b]) => [k, b, 'window'])
-      : Object.entries(risk.payload.benchmarks).map(([k, b]) => [
-          k,
-          {
+  const benchmarkStats = (key: string): { stats: WindowBenchmarkStats | null; scope: 'window' | 'inception' } => {
+    if (windowStats && windowStats.status === 'ok' && windowStats.benchmarks[key]) {
+      return { stats: windowStats.benchmarks[key]!, scope: 'window' };
+    }
+    const b = risk?.payload.benchmarks[key];
+    return {
+      stats: b
+        ? {
             regression: b.regression,
             regression_note: null,
             tracking_error: b.tracking_error,
             information_ratio: b.information_ratio,
             benchmark_cumulative_return: null,
-          },
-          'inception',
-        ])
-    : [];
+          }
+        : null,
+      scope: 'inception',
+    };
+  };
 
   const rollingSeries: RollingSeries[] = [];
   if (risk) {
-    const r = risk.payload.rolling ?? {};
+    const rolling = risk.payload.rolling ?? {};
     for (const w of [21, 63, 252]) {
-      const vol = r[`vol_${w}d`];
+      const vol = rolling[`vol_${w}d`];
       if (vol) rollingSeries.push({ key: `vol${w}`, label: 'Volatility', window: w, dates: vol.dates, values: vol.values, format: 'percent' });
     }
     for (const w of [63, 126]) {
-      const s = r[`sharpe_${w}d`];
+      const s = rolling[`sharpe_${w}d`];
       if (s) rollingSeries.push({ key: `sharpe${w}`, label: 'Sharpe', window: w, dates: s.dates, values: s.values, format: 'ratio', reference: 0 });
     }
     const spx = risk.payload.benchmarks[SPX_GBP];
     for (const w of [63, 126] as const) {
       const b = spx?.[`rolling_beta_${w}d`];
-      if (b) rollingSeries.push({ key: `beta${w}`, label: 'Beta vs S&P 500 (GBP)', window: w, dates: b.dates, values: b.values, format: 'ratio', reference: 1 });
+      if (b) rollingSeries.push({ key: `beta${w}`, label: 'Beta vs S&P 500 £', window: w, dates: b.dates, values: b.values, format: 'ratio', reference: 1 });
     }
   }
 
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <WindowPicker current={window} basePath="/risk" />
-        <span className="text-[11px] text-muted">
-          {summary.from && summary.to
-            ? `${shortDate(summary.from)} – ${shortDate(summary.to)} · ${summary.observations} trading days`
-            : spec.description}
-          {risk && ` · regressions computed ${shortDate(risk.snapDate)}`}
-          {market.riskFreeSource ? ` · risk-free ${market.riskFreeSource}` : ' · risk-free 0 until FRED is loaded'}
-        </span>
-      </div>
+  const stressRows = scenarios
+    ? [
+        ...scenarios.payload.historical
+          .filter((h) => h.status === 'ok' && h.modelled_pnl_gbp !== undefined)
+          .map((h) => ({
+            key: h.key,
+            label: h.label,
+            value: h.modelled_pnl_gbp!,
+            sub: `${percent(h.modelled_return, 1, { signed: true })} · S&P ${percent(h.benchmark_return, 1, { signed: true })}`,
+          })),
+      ]
+    : [];
+  const shockRows = scenarios
+    ? Object.entries(scenarios.payload.shocks).map(([name, s]) => ({
+        key: name,
+        label: shockLabel(name),
+        value: s.modelled_pnl_gbp,
+        sub: percent(s.modelled_return, 1, { signed: true }),
+      }))
+    : [];
 
-      {/* ---- window descriptives, live from the TWR series ---- */}
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4 xl:grid-cols-8">
-        {[
-          ['Return', percent(summary.ret, 1, { signed: true })],
-          ['Ann. return', summary.annualisedReturn === null ? '—' : percent(summary.annualisedReturn, 1, { signed: true })],
-          ['Volatility', percent(summary.volatility, 1)],
-          ['Sharpe', summary.sharpe?.toFixed(2) ?? '—'],
-          ['Sortino', summary.sortino?.toFixed(2) ?? '—'],
-          ['Max DD', percent(summary.maxDrawdown?.depth ?? null, 1)],
-          ['Best day', percent(summary.bestDay, 2, { signed: true })],
-          ['Worst day', percent(summary.worstDay, 2, { signed: true })],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-surface">
-            <Stat label={label!} value={value!} />
-          </div>
-        ))}
-      </div>
+  return (
+    <div className="font-display mx-auto max-w-5xl space-y-4 pb-4">
+      <PageHead title="Risk" window={window} basePath="/risk" />
+
       {summary.observations < 20 && (
-        <Note>
-          Only {summary.observations} daily returns in this window, so annualised figures are withheld.
-          A Sharpe ratio on a fortnight of data is not a measurement.
-        </Note>
+        <Note>Only {summary.observations} days in this window, so annualised figures are withheld.</Note>
       )}
 
-      <div className="grid gap-3 xl:grid-cols-2 xl:items-start">
-        {/* ---- distribution ---- */}
-        <Card
-          title="Daily return distribution"
-          subtitle={`${spec.label} window · the shape behind the VaR figure`}
-          footnote={`Skew ${fmtNumber(risk?.payload.since_inception.skew ?? null, 2)} and excess kurtosis ${fmtNumber(risk?.payload.since_inception.excess_kurtosis ?? null, 2)} since inception. Positive kurtosis means fatter tails than a normal distribution — more extreme days than the volatility figure implies.`}
-        >
-          <DistributionChart bins={bins} var95={summary.var95} observations={returns.length} />
-        </Card>
-
-        {/* ---- benchmarks for the window ---- */}
-        <Card
-          title="Versus benchmarks"
-          subtitle={
-            benchmarkRows[0]?.[2] === 'inception'
-              ? `since inception — the ${spec.label} window has too few days for a regression`
-              : `${spec.label} window · GBP-translated and local-currency side by side (§3.3)`
+      {/* ---- headline figures, each beside the index ---- */}
+      <section className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+        <Tile
+          label="Volatility"
+          value={percent(summary.volatility, 1)}
+          sub={vsMarket?.volatility == null ? spec.label : `S&P ${percent(vsMarket.volatility, 1)}`}
+        />
+        <Tile
+          label="Sharpe"
+          value={summary.sharpe === null ? '—' : summary.sharpe.toFixed(2)}
+          sub={vsMarket?.sharpe == null ? spec.label : `S&P ${vsMarket.sharpe.toFixed(2)}`}
+        />
+        <Tile
+          label="Max drawdown"
+          value={percent(summary.maxDrawdown?.depth ?? null, 1)}
+          valueTone={summary.maxDrawdown?.depth.isNegative() ? 'text-down' : undefined}
+          sub={vsMarket?.maxDrawdown == null ? spec.label : `S&P ${percent(vsMarket.maxDrawdown, 1)}`}
+        />
+        <Tile
+          label="Sortino"
+          value={summary.sortino === null || !Number.isFinite(summary.sortino) ? '—' : summary.sortino.toFixed(2)}
+          sub={`worst day ${percent(summary.worstDay, 1)}`}
+        />
+        <Tile
+          label="Beta"
+          value={r ? r.beta.toFixed(2) : '—'}
+          sub={r ? `± ${(1.96 * r.beta_stderr).toFixed(2)} · R² ${percent(r.r_squared, 0)}` : 'awaiting nightly job'}
+        />
+        <Tile
+          label="Alpha / yr"
+          value={r ? percent(r.alpha_annualised, 1, { signed: true }) : '—'}
+          sub={
+            r ? (
+              <IntervalBar
+                point={r.alpha_annualised}
+                low={r.alpha_ci95_low}
+                high={r.alpha_ci95_high}
+                format={(v) => percent(v, 0, { signed: true })}
+              />
+            ) : (
+              'awaiting nightly job'
+            )
           }
-          footnote="The GBP series is the return you earned. The local-currency series is the right comparison for judging security selection, because it is not moved by GBP/USD. Alpha is shown with its 95% range: read the range, not the midpoint."
-        >
-          {benchmarkRows.length === 0 ? (
+        />
+      </section>
+      {regression?.scope === 'inception' && (
+        <p className="px-1 text-[11px] text-muted">Beta and alpha are since inception — too few days in {spec.label}.</p>
+      )}
+
+      <JumpLinks
+        items={[
+          ['#bad-days', 'Bad days'],
+          ['#tail', 'Tail risk'],
+          ['#stress', 'Stress'],
+          ['#benchmarks', '£ vs $'],
+          ['#rolling', 'Rolling'],
+          ['#factors', 'Factors'],
+          ['#liquidity', 'Liquidity'],
+        ]}
+      />
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* ---- VaR ---- */}
+        <Section id="bad-days" title="Bad days" meta={varPack ? `historical · ${shortDate(varPack.snapDate)}` : undefined}>
+          {varOk ? (
+            <>
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-[12px] text-muted">1 day in 20 loses more than</div>
+                  <div className="text-[32px] font-semibold leading-tight tracking-tight">{money(var95)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[12px] text-muted">Average of those days</div>
+                  <div className="text-[20px] font-semibold text-down">{money(cvar95)}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[11px] text-muted">1 in 100 days</div>
+                  <div className="text-[17px] font-semibold">{money(var99)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted">Over 10 days, 1 in 20</div>
+                  <div className="text-[17px] font-semibold">{money(var95_10)}</div>
+                </div>
+              </div>
+            </>
+          ) : windowVar !== null ? (
+            <div>
+              <div className="text-[12px] text-muted">1 day in 20 · {spec.label} window</div>
+              <div className="text-[32px] font-semibold leading-tight tracking-tight">{money(windowVar)}</div>
+              <div className="text-[11px] text-muted">Full VaR needs a year of history.</div>
+            </div>
+          ) : (
+            <Insufficient reason={varPack?.payload.message ?? 'VaR needs at least 252 days of history.'} />
+          )}
+          <div className="-mx-4">
+            <DistributionChart bins={bins} var95={summary.var95} observations={returns.length} />
+          </div>
+        </Section>
+
+        {/* ---- component VaR ---- */}
+        <Section id="tail" title="Who carries the tail" meta="share of the bad-day loss">
+          {tail.length === 0 ? (
+            <Insufficient reason="Needs 60 overlapping days across the holdings." />
+          ) : (
+            <ul className="space-y-2.5">
+              {tail.slice(0, 10).map((p) => (
+                <li key={p.instrument_id} className="grid grid-cols-[4.5rem_1fr_3rem] items-center gap-3 text-[13px]">
+                  <span className="truncate font-medium">{symbolOf(p.instrument_id)}</span>
+                  <span className="h-2 rounded-full bg-surface-2">
+                    <span
+                      className="block h-full rounded-full bg-down/70"
+                      style={{ width: `${Math.max(0, Math.min(1, p.share_of_var ?? 0)) * 100}%` }}
+                    />
+                  </span>
+                  <span className="text-right">{percent(p.share_of_var, 0)}</span>
+                  <span className="col-span-3 -mt-1.5 text-[11px] text-muted">
+                    {percent(p.weight, 1)} of value · {money(-Math.abs(p.component_var_gbp))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+
+        {/* ---- scenarios ---- */}
+        <Section id="stress" title="Stress tests" meta="estimates via beta, not forecasts">
+          {!scenarios ? (
+            <Empty>Awaiting the nightly job.</Empty>
+          ) : (
+            <>
+              {stressRows.length > 0 && (
+                <div className="-mx-4">
+                  <div className="px-4 pb-1 text-[12px] text-muted">If history repeated</div>
+                  <Contributors rows={stressRows} format={signedMoney} wideLabels />
+                </div>
+              )}
+              {shockRows.length > 0 && (
+                <div className="-mx-4">
+                  <div className="px-4 pb-1 text-[12px] text-muted">If one thing moved</div>
+                  <Contributors rows={shockRows} format={signedMoney} wideLabels />
+                </div>
+              )}
+            </>
+          )}
+        </Section>
+
+        {/* ---- GBP vs local benchmark ---- */}
+        <Section id="benchmarks" title="S&P in £ and $" meta={risk ? `nightly · ${shortDate(risk.snapDate)}` : undefined}>
+          {!risk ? (
             <Insufficient reason="The nightly analytics job has not run yet." />
           ) : (
-            <div className="divide-y divide-line">
-              {benchmarkRows.map(([name, b]) => (
-                <div key={name} className="px-4 py-3">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <div className="text-[12px] font-medium">
-                      {benchmarkName(name)}
-                      {name.endsWith('_gbp') && (
-                        <Badge tone="accent" title="Default view: the return actually earned">
-                          default
-                        </Badge>
-                      )}
+            <div className="space-y-4">
+              {[
+                [SPX_GBP, 'In pounds', 'what you earned'],
+                [SPX_LOCAL, 'In dollars', 'stock picking, FX removed'],
+              ].map(([key, title, note]) => {
+                const { stats, scope } = benchmarkStats(key!);
+                const reg = stats?.regression;
+                const capture = risk.payload.benchmarks[key!]?.capture;
+                return (
+                  <div key={key} className="space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[14px] font-semibold">{title}</span>
+                      <span className="text-[11px] text-muted">
+                        {note}
+                        {scope === 'inception' && ' · since inception'}
+                      </span>
                     </div>
-                    <div className="text-[11px] text-muted">
-                      {b?.regression ? `n=${b.regression.observations} · R² ${percent(b.regression.r_squared, 0)}` : (b?.regression_note ?? '—')}
-                    </div>
-                  </div>
-                  {b?.regression && (
-                    <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-                      <div>
-                        <div className="flex items-baseline justify-between text-[11px] text-muted">
-                          <span>Alpha, annualised</span>
-                          <span className="tabular text-ink">
-                            {estimate(b.regression.alpha_annualised, b.regression.alpha_stderr_annualised)}
-                          </span>
+                    {reg ? (
+                      <>
+                        <div className="flex items-baseline justify-between text-[12px]">
+                          <span className="text-muted">Alpha / yr</span>
+                          <span>{percent(reg.alpha_annualised, 1, { signed: true })}</span>
                         </div>
                         <IntervalBar
-                          className="mt-1"
-                          point={b.regression.alpha_annualised}
-                          low={b.regression.alpha_ci95_low}
-                          high={b.regression.alpha_ci95_high}
+                          point={reg.alpha_annualised}
+                          low={reg.alpha_ci95_low}
+                          high={reg.alpha_ci95_high}
                           format={(v) => percent(v, 0, { signed: true })}
                         />
-                      </div>
-                      <div>
-                        <div className="flex items-baseline justify-between text-[11px] text-muted">
-                          <span>Beta</span>
-                          <span className="tabular text-ink">
-                            {b.regression.beta.toFixed(2)} ± {(1.96 * b.regression.beta_stderr).toFixed(2)}
-                          </span>
-                        </div>
-                        <IntervalBar
-                          className="mt-1"
-                          point={b.regression.beta}
-                          low={b.regression.beta_ci95_low}
-                          high={b.regression.beta_ci95_high}
-                          format={(v) => v.toFixed(2)}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted">
-                    <span>
-                      Tracking error <span className="tabular text-ink">{percent(b?.tracking_error, 1)}</span>
-                    </span>
-                    <span>
-                      Information ratio <span className="tabular text-ink">{b?.information_ratio?.toFixed(2) ?? '—'}</span>
-                    </span>
-                    {risk?.payload.benchmarks[name]?.capture && (
-                      <span>
-                        Capture up/down (monthly, inception){' '}
-                        <span className="tabular text-ink">
-                          {risk.payload.benchmarks[name]!.capture.up_capture?.toFixed(2) ?? '—'} /{' '}
-                          {risk.payload.benchmarks[name]!.capture.down_capture?.toFixed(2) ?? '—'}
-                        </span>
-                      </span>
+                      </>
+                    ) : (
+                      <div className="text-[12px] text-muted">{stats?.regression_note ?? 'No regression yet.'}</div>
                     )}
+                    <div className="grid grid-cols-4 gap-2 text-[12px]">
+                      <Mini label="Beta" value={reg ? reg.beta.toFixed(2) : '—'} />
+                      <Mini label="Track. err." value={percent(stats?.tracking_error, 1)} />
+                      <Mini label="Info ratio" value={stats?.information_ratio?.toFixed(2) ?? '—'} />
+                      <Mini
+                        label="Capture ↑/↓"
+                        value={
+                          capture
+                            ? `${capture.up_capture?.toFixed(2) ?? '—'}/${capture.down_capture?.toFixed(2) ?? '—'}`
+                            : '—'
+                        }
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-        </Card>
+        </Section>
       </div>
 
       {/* ---- rolling ---- */}
-      <Card
-        title="Rolling risk"
-        subtitle="is the portfolio today the one the headline figures describe?"
-        footnote="Each point is the statistic over the trailing window ending that day. A flat line means the since-inception figure is representative; a line that has moved means it is not, and the right-hand edge is the number to trust."
-      >
+      <Section id="rolling" title="Rolling" meta="is today like the average?">
         {!risk ? (
           <Empty>Awaiting the nightly job.</Empty>
         ) : (
-          <RollingChart series={rollingSeries} />
-        )}
-      </Card>
-
-      {/* ---- VaR ---- */}
-      <div className="grid gap-3 xl:grid-cols-[1fr_1fr]">
-        <Card
-          title="Value at Risk"
-          subtitle="three methods, 95% and 99%, 1 and 10 days · since inception"
-          footnote="Historical is the primary figure. Parametric understates the tail — it is shown for contrast. Cornish-Fisher adjusts the normal quantile for skew and kurtosis and is the best compromise. 10-day figures use square-root-of-time scaling, which assumes independence and is therefore optimistic."
-        >
-          {varPack?.payload.status !== 'ok' || !varPack.payload.methods ? (
-            <Insufficient
-              reason={
-                varPack?.payload.message ??
-                'VaR needs at least 252 daily observations. Below that it measures nothing.'
-              }
-            />
-          ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Conf.</Th>
-                  <Th>Horizon</Th>
-                  <Th align="right">Historical</Th>
-                  <Th align="right" className="hidden sm:table-cell">Parametric</Th>
-                  <Th align="right">Cornish-Fisher</Th>
-                  <Th align="right">Exp. shortfall</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(varPack.payload.methods).flatMap(([confidence, horizons]) =>
-                  Object.entries(horizons).map(([horizon, data]) => (
-                    <Tr key={`${confidence}-${horizon}`}>
-                      <Td>{confidence}%</Td>
-                      <Td>{horizon}</Td>
-                      <Td align="right" numeric className="text-down">
-                        {loss(data.var.historical?.gbp)}
-                      </Td>
-                      <Td align="right" numeric className="hidden text-muted sm:table-cell">
-                        {loss(data.var.parametric?.gbp)}
-                      </Td>
-                      <Td align="right" numeric>
-                        {loss(data.var.cornish_fisher?.gbp)}
-                      </Td>
-                      <Td align="right" numeric className="text-down">
-                        {loss(data.cvar.historical?.gbp)}
-                      </Td>
-                    </Tr>
-                  )),
-                )}
-              </tbody>
-            </Table>
-          )}
-        </Card>
-
-        <Card
-          title="Component VaR"
-          subtitle="which position carries the tail risk"
-          footnote="Components sum to the portfolio VaR, so a share of 40% means that holding is 40% of the tail. This is the actionable output of the VaR section."
-        >
-          {varPack?.payload.component?.status !== 'ok' ? (
-            <Insufficient reason="Needs at least 60 overlapping daily observations across the holdings." />
-          ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Position</Th>
-                  <Th align="right">Weight</Th>
-                  <Th align="right" className="hidden sm:table-cell">Standalone vol</Th>
-                  <Th align="right">Component VaR</Th>
-                  <Th align="right">Share</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {varPack.payload.component.positions!.map((p) => (
-                  <Tr key={p.instrument_id}>
-                    <Td>{symbolOf(p.instrument_id)}</Td>
-                    <Td align="right" numeric>
-                      {percent(p.weight, 1)}
-                    </Td>
-                    <Td align="right" numeric className="hidden sm:table-cell">
-                      {percent(p.standalone_vol_annualised, 1)}
-                    </Td>
-                    <Td align="right" numeric className="text-down">
-                      {money(-Math.abs(p.component_var_gbp))}
-                    </Td>
-                    <Td align="right" numeric>
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-surface-2 sm:block">
-                          <div className="h-full bg-down/70" style={{ width: `${Math.max(0, Math.min(1, p.share_of_var ?? 0)) * 100}%` }} />
-                        </div>
-                        {percent(p.share_of_var, 0)}
-                      </div>
-                    </Td>
-                  </Tr>
-                ))}
-              </tbody>
-            </Table>
-          )}
-        </Card>
-      </div>
-
-      {/* ---- factors ---- */}
-      <Card
-        title="Factor exposures"
-        subtitle="Fama-French 5 plus momentum, Ken French Data Library · since inception"
-        footnote={factors?.payload.caveat}
-      >
-        {!factors ? (
-          <Empty>Run <code className="text-ink">python analytics/run_nightly.py --job=factors</code> first.</Empty>
-        ) : (
-          <div className="space-y-3 px-4 py-3">
-            {Object.entries(factors.payload.fits).map(([region, fitted]) =>
-              !fitted ? null : (
-                <div key={region}>
-                  <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
-                    <span className="text-[12px] font-medium">{region}</span>
-                    <span className="text-[11px] text-muted">
-                      R² {percent(fitted.r_squared, 0)} · n={fitted.observations} · alpha{' '}
-                      {estimate(fitted.alpha_annualised, fitted.alpha_stderr_annualised)}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {fitted.loadings.map((l) => (
-                      <div
-                        key={l.factor}
-                        className="rounded border border-line px-2 py-1"
-                        title={`t = ${l.tstat.toFixed(2)}`}
-                      >
-                        <div className="text-[10px] text-muted">{l.factor}</div>
-                        <div className="tabular text-[12px]">
-                          {l.coefficient.toFixed(2)}
-                          <span className="ml-1 text-[10px] text-muted">±{(1.96 * l.stderr).toFixed(2)}</span>
-                        </div>
-                        {Math.abs(l.tstat) < 1.96 && <div className="text-[9px] text-muted">n.s.</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ),
-            )}
+          <div className="-mx-4">
+            <RollingChart series={rollingSeries} />
           </div>
         )}
-      </Card>
+      </Section>
 
-      {/* ---- scenarios ---- */}
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Card
-          title="Historical replay"
-          subtitle="today's holdings through past stress windows"
-          footnote={scenarios?.payload.disclaimer}
-        >
-          {!scenarios ? (
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* ---- factors ---- */}
+        <Section id="factors" title="Factor tilts" meta={factors ? `since inception · ${shortDate(factors.snapDate)}` : undefined}>
+          {!factors ? (
             <Empty>Awaiting the nightly job.</Empty>
           ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Window</Th>
-                  <Th align="right" className="hidden sm:table-cell">Benchmark</Th>
-                  <Th align="right" className="hidden sm:table-cell">Portfolio β</Th>
-                  <Th align="right">Modelled</Th>
-                  <Th align="right">P&L</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {scenarios.payload.historical.map((h) => (
-                  <Tr key={h.key}>
-                    <Td className="whitespace-normal">{h.label}</Td>
-                    <Td align="right" numeric className="hidden sm:table-cell">
-                      {h.status === 'ok' ? percent(h.benchmark_return, 1, { signed: true }) : '—'}
-                    </Td>
-                    <Td align="right" numeric className="hidden sm:table-cell">
-                      {h.portfolio_beta?.toFixed(2) ?? '—'}
-                    </Td>
-                    <Td align="right" numeric className="text-down">
-                      {h.status === 'ok' ? percent(h.modelled_return, 1, { signed: true }) : 'no history'}
-                    </Td>
-                    <Td align="right" numeric className="text-down">
-                      {h.status === 'ok' ? money(h.modelled_pnl_gbp!) : '—'}
-                    </Td>
-                  </Tr>
-                ))}
-              </tbody>
-            </Table>
+            Object.entries(factors.payload.fits).map(([region, fitted]) =>
+              !fitted ? null : (
+                <div key={region} className="-mx-4">
+                  <div className="flex justify-between px-4 pb-1 text-[12px] text-muted">
+                    <span>{region}</span>
+                    <span>R² {percent(fitted.r_squared, 0)}</span>
+                  </div>
+                  <Contributors
+                    rows={fitted.loadings.map((l) => ({
+                      key: l.factor,
+                      label: l.factor,
+                      value: l.coefficient,
+                      sub: Math.abs(l.tstat) < 1.96 ? 'not significant' : undefined,
+                    }))}
+                    format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`}
+                  />
+                </div>
+              ),
+            )
           )}
-        </Card>
+        </Section>
 
-        <Card
-          title="Factor shocks"
-          subtitle="propagated through betas — estimates, not forecasts"
-          footnote={scenarios?.payload.disclaimer}
-        >
-          {!scenarios ? (
+        {/* ---- liquidity ---- */}
+        <Section id="liquidity" title="Days to sell" meta="at 10% of daily volume">
+          {!liquidity ? (
             <Empty>Awaiting the nightly job.</Empty>
           ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Shock</Th>
-                  <Th align="right">Modelled return</Th>
-                  <Th align="right">P&L</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(scenarios.payload.shocks).map(([name, s]) => (
-                  <Tr key={name}>
-                    <Td>{name.replace(/_/g, ' ')}</Td>
-                    <Td align="right" numeric className={s.modelled_return < 0 ? 'text-down' : 'text-up'}>
-                      {percent(s.modelled_return, 1, { signed: true })}
-                    </Td>
-                    <Td align="right" numeric className={s.modelled_pnl_gbp < 0 ? 'text-down' : 'text-up'}>
-                      {money(s.modelled_pnl_gbp)}
-                    </Td>
-                  </Tr>
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {['50pct', '90pct', '100pct'].map((key) => (
+                  <div key={key}>
+                    <div className="text-[11px] text-muted">{key.replace('pct', '%')} of it</div>
+                    <div className="text-[20px] font-semibold">
+                      {liquidity.payload.aggregate[key] === null ? '—' : `${liquidity.payload.aggregate[key]}d`}
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </Table>
-          )}
-        </Card>
-      </div>
-
-      {/* ---- liquidity ---- */}
-      <Card
-        title="Liquidity stress"
-        subtitle={
-          liquidity
-            ? `days to liquidate · ${liquidity.payload.flagged_count} position(s) over ${liquidity.payload.flag_threshold_days} days`
-            : undefined
-        }
-        footnote={liquidity?.payload.caveat}
-      >
-        {!liquidity ? (
-          <Empty>Awaiting the nightly job.</Empty>
-        ) : (
-          <>
-            <div className="flex flex-wrap gap-4 border-b border-line px-4 py-2 text-[12px]">
-              {['50pct', '90pct', '100pct'].map((key) => (
-                <span key={key}>
-                  <span className="text-muted">{key.replace('pct', '%')} of book: </span>
-                  <span className="tabular">
-                    {liquidity.payload.aggregate[key] === null
-                      ? 'unknown'
-                      : `${liquidity.payload.aggregate[key]} days`}
-                  </span>
-                </span>
-              ))}
-            </div>
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Position</Th>
-                  <Th className="hidden sm:table-cell">Venue</Th>
-                  <Th align="right">Value</Th>
-                  <Th align="right" className="hidden sm:table-cell">ADV 20d</Th>
-                  <Th align="right">@10%</Th>
-                  <Th align="right" className="hidden sm:table-cell">@20%</Th>
-                  <Th align="right" className="hidden sm:table-cell">@30%</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {liquidity.payload.positions.map((p) => (
-                  <Tr key={p.instrument_id}>
-                    <Td>
-                      {p.symbol ?? symbolOf(p.instrument_id)}
-                      {p.flagged && (
-                        <Badge tone="warn" title="More than five days to exit at 10% participation">
-                          illiquid
-                        </Badge>
-                      )}
-                    </Td>
-                    <Td className="hidden sm:table-cell">{p.exchange_mic ?? '—'}</Td>
-                    <Td align="right" numeric>
-                      {money(p.value_gbp)}
-                    </Td>
-                    <Td align="right" numeric className="hidden sm:table-cell">
-                      {p.adv_20d ? fmtNumber(p.adv_20d, 0) : 'unknown'}
-                    </Td>
-                    {(['10pct', '20pct', '30pct'] as const).map((rate, i) => (
-                      <Td key={rate} align="right" numeric className={i > 0 ? 'hidden sm:table-cell' : undefined}>
-                        {p.days_to_liquidate[rate] === null || p.days_to_liquidate[rate] === undefined
-                          ? '—'
-                          : `${p.days_to_liquidate[rate]!.toFixed(1)}d`}
-                      </Td>
+              </div>
+              {liquidity.payload.flagged_count > 0 && (
+                <ul className="space-y-1 text-[13px]">
+                  {liquidity.payload.positions
+                    .filter((p) => p.flagged)
+                    .map((p) => (
+                      <li key={p.instrument_id} className="flex justify-between">
+                        <span className="font-medium">{p.symbol ?? symbolOf(p.instrument_id)}</span>
+                        <span className="text-warn">{p.days_to_liquidate['10pct']?.toFixed(1) ?? '—'} days</span>
+                      </li>
                     ))}
-                  </Tr>
-                ))}
-              </tbody>
-            </Table>
-          </>
-        )}
-      </Card>
+                </ul>
+              )}
+            </>
+          )}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function Mini({ label, value }: { label: string; value: string }) {
+  return (
+    <div className={cn('min-w-0')}>
+      <div className="truncate text-[10px] text-muted">{label}</div>
+      <div className="font-semibold">{value}</div>
     </div>
   );
 }

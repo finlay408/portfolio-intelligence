@@ -41,22 +41,17 @@ export const viewport: Viewport = {
 };
 
 /**
- * `primary` marks the four pages that earn a slot on the phone's bottom bar;
- * everything else sits behind "More". On a desktop the whole list is the
- * header row.
+ * Five pages, all on the phone's bottom bar, nothing behind a "More". Trades,
+ * corporate actions and data health are reached from where they matter — the
+ * Holdings upload button, the overview's alert badge and freshness chip —
+ * rather than from the nav.
  */
 const NAV: NavItem[] = [
-  { href: '/', label: 'Overview', primary: true },
-  { href: '/positions', label: 'Positions', primary: true },
-  { href: '/attribution', label: 'Attribution', short: 'Attrib.', primary: true },
-  { href: '/risk', label: 'Risk', primary: true },
-  { href: '/rrg', label: 'Rotation' },
-  { href: '/exposure', label: 'Exposure' },
-  { href: '/trades', label: 'Trades' },
-  { href: '/options', label: 'Options' },
-  { href: '/watchlist', label: 'Watchlist' },
-  { href: '/macro', label: 'Macro' },
-  { href: '/data-health', label: 'Data' },
+  { href: '/', label: 'Overview' },
+  { href: '/positions', label: 'Holdings', also: ['/trades'] },
+  { href: '/attribution', label: 'Performance', short: 'Perf.' },
+  { href: '/risk', label: 'Risk' },
+  { href: '/markets', label: 'Markets' },
 ];
 
 /**

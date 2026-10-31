@@ -15,6 +15,17 @@ const nextConfig: NextConfig = {
   // Pin the trace root: a lockfile higher up the tree would otherwise be picked
   // as the workspace root and drag unrelated files into the build trace.
   outputFileTracingRoot: path.join(import.meta.dirname, '.'),
+  // Pages merged into the five-tab layout. Temporary redirects, so a bookmark
+  // or home-screen shortcut still lands somewhere sensible.
+  async redirects() {
+    return [
+      { source: '/exposure', destination: '/positions#exposure', permanent: false },
+      { source: '/rrg', destination: '/markets#rotation', permanent: false },
+      { source: '/macro', destination: '/markets#macro', permanent: false },
+      { source: '/watchlist', destination: '/', permanent: false },
+      { source: '/options', destination: '/', permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;

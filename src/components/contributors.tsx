@@ -19,7 +19,19 @@ export interface ContributorRow {
 
 const fmt = (v: number) => `${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
 
-export function Contributors({ rows, emptyText = 'Nothing to attribute yet.' }: { rows: ContributorRow[]; emptyText?: string }) {
+export function Contributors({
+  rows,
+  emptyText = 'Nothing to attribute yet.',
+  format = fmt,
+  wideLabels = false,
+}: {
+  rows: ContributorRow[];
+  emptyText?: string;
+  /** How the right-hand figure is written; a percentage contribution by default. */
+  format?: (v: number) => string;
+  /** Give the label more room than the bar, for long names such as stress scenarios. */
+  wideLabels?: boolean;
+}) {
   if (rows.length === 0) {
     return <p className="px-4 py-6 text-center text-[12px] text-muted">{emptyText}</p>;
   }
@@ -38,7 +50,10 @@ export function Contributors({ rows, emptyText = 'Nothing to attribute yet.' }: 
           <span className="font-medium">{r.label}</span>
         );
         return (
-          <li key={r.key} className="grid grid-cols-[minmax(4.5rem,1fr)_2fr_auto] items-center gap-3 px-4 py-1.5 text-[12px]">
+          <li key={r.key} className={cn(
+            'grid items-center gap-3 px-4 py-1.5 text-[12px]',
+            wideLabels ? 'grid-cols-[minmax(0,3fr)_2fr_auto]' : 'grid-cols-[minmax(4.5rem,1fr)_2fr_auto]',
+          )}>
             <div className="min-w-0 truncate">
               {label}
               {r.sub && <div className="truncate text-[10px] text-muted">{r.sub}</div>}
@@ -52,7 +67,7 @@ export function Contributors({ rows, emptyText = 'Nothing to attribute yet.' }: 
                 {positive && <div className="h-full rounded-r-full bg-up/70" style={{ width: `${width}%` }} />}
               </div>
             </div>
-            <span className={cn('tabular w-16 text-right', positive ? 'text-up' : 'text-down')}>{fmt(r.value)}</span>
+            <span className={cn('tabular w-16 text-right', r.value === 0 ? 'text-muted' : positive ? 'text-up' : 'text-down')}>{format(r.value)}</span>
           </li>
         );
       })}

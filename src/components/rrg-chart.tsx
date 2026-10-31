@@ -186,7 +186,7 @@ export function RrgChart({
 
   return (
     <div className="px-4 py-3">
-      <svg ref={ref} className="w-full" style={{ height }} role="img" aria-label="Relative rotation graph" />
+      <svg ref={ref} className="w-full" style={{ height }} role="img" aria-label={`Relative rotation graph against ${benchmarkLabel}`} />
 
       <div className="mt-2 flex flex-wrap gap-1.5">
         {series.map((s) => (
@@ -211,12 +211,6 @@ export function RrgChart({
           </button>
         ))}
       </div>
-
-      <p className="mt-3 text-[11px] leading-relaxed text-muted">
-        Positions relative to {benchmarkLabel}, on weekly bars. Daily RRG is noise. A holding in
-        the leading quadrant is outperforming the benchmark — not necessarily rising. The
-        conventional rotation is anticlockwise: improving → leading → weakening → lagging.
-      </p>
     </div>
   );
 }

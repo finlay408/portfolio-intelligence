@@ -31,7 +31,6 @@ import {
   portfolioDaily,
   pricesDaily,
   quotesLive,
-  watchlist,
 } from '@/db/schema';
 import { Decimal, ONE, ZERO, dec, divOrZero } from './decimal';
 import { addDays, daysBetween, eachDay, monthKey, quarterKey, todayIso, yearKey } from './dates';
@@ -628,7 +627,7 @@ export interface MacroTile {
   id: string;
   latest: number | null;
   latestDate: IsoDate | null;
-  /** Change against the observation roughly a month earlier. */
+  /** Change against the last observation at least a month before the latest. */
   change: number | null;
   /** Recent observations, oldest first, for a sparkline. */
   recent: number[];
@@ -636,11 +635,12 @@ export interface MacroTile {
 
 /**
  * The latest reading of each FRED series, with its one-month change and a
- * short history for a sparkline. Series have different frequencies, so "a
- * month" is 21 observations back, as on the macro page.
+ * short history for a sparkline. Series have different frequencies — VIX is
+ * daily, CPI monthly — so "a month ago" is found by date, not by counting
+ * observations back.
  */
 export async function getMacroTiles(ids: string[], points = 63): Promise<MacroTile[]> {
-  const since = addDays(todayIso(), -Math.ceil(points * 1.6));
+  const since = addDays(todayIso(), -Math.max(Math.ceil(points * 1.6), 400));
   const rows = await db
     .select({ id: macroSeries.seriesId, date: macroSeries.obsDate, value: macroSeries.value })
     .from(macroSeries)
@@ -651,41 +651,16 @@ export async function getMacroTiles(ids: string[], points = 63): Promise<MacroTi
     const series = rows.filter((r) => r.id === id && r.value !== null);
     const values = series.map((r) => Number(r.value));
     const latest = values.at(-1) ?? null;
-    const previous = values.length > 1 ? values[Math.max(0, values.length - 22)]! : null;
+    const latestDate = series.at(-1)?.date ?? null;
+    const monthBefore = latestDate ? addDays(latestDate, -30) : null;
+    const previousRow = monthBefore ? series.filter((r) => r.date <= monthBefore).at(-1) : undefined;
+    const previous = previousRow ? Number(previousRow.value) : null;
     return {
       id,
       latest,
-      latestDate: series.at(-1)?.date ?? null,
+      latestDate,
       change: latest === null || previous === null ? null : latest - previous,
       recent: values.slice(-points),
-    };
-  });
-}
-
-export async function getWatchlist() {
-  const rows = await db
-    .select({
-      entry: watchlist,
-      instrument: instruments,
-      quote: quotesLive,
-    })
-    .from(watchlist)
-    .innerJoin(instruments, eq(instruments.id, watchlist.instrumentId))
-    .leftJoin(quotesLive, eq(quotesLive.instrumentId, watchlist.instrumentId))
-    .orderBy(desc(watchlist.conviction));
-
-  return rows.map((r) => {
-    const price = r.quote ? dec(r.quote.price) : null;
-    const target = r.entry.targetEntry ? dec(r.entry.targetEntry) : null;
-    return {
-      ...r,
-      price,
-      target,
-      distanceToTarget: price && target && !target.isZero() ? price.div(target).minus(ONE) : null,
-      alertTriggered:
-        price !== null &&
-        ((r.entry.alertAbove !== null && price.greaterThan(dec(r.entry.alertAbove))) ||
-          (r.entry.alertBelow !== null && price.lessThan(dec(r.entry.alertBelow)))),
     };
   });
 }
