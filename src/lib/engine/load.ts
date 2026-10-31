@@ -203,6 +203,53 @@ export async function loadPrices(
   return new MapPriceLookup(series);
 }
 
+/**
+ * The two most recent closes on or before `asOf` for each instrument — enough
+ * for a current valuation (`priceOn(asOf)`) and its day change
+ * (`priceOn(the day before that close)`), and nothing more.
+ *
+ * `loadPrices` from inception is right for the recompute job, which values
+ * every day in the range. The overview values one day, and pulling ~40k rows
+ * to do it was most of the page's wait when the database sits an ocean away
+ * from the function. The window function keeps `priceOn`'s carry-forward
+ * semantics: a thinly traded line whose last close is weeks old still has a
+ * price here, because the two rows are the latest two whatever their dates.
+ */
+export async function loadLatestPrices(
+  instrumentIds: number[],
+  asOf: IsoDate,
+): Promise<MapPriceLookup> {
+  if (instrumentIds.length === 0) return new MapPriceLookup(new Map());
+  // A lateral join walks the (instrument_id, price_date) primary key once per
+  // instrument and stops after two rows, so its cost does not grow with the
+  // depth of price history. A window function over the same rows has to sort
+  // every bar first. Drizzle has no lateral helper, hence the raw SQL.
+  const ids = sql`array[${sql.join(
+    instrumentIds.map((id) => sql`${id}`),
+    sql`,`,
+  )}]::int[]`;
+  const rows = (await db.execute(sql`
+    select p.instrument_id as "instrumentId", p.price_date as "priceDate", p.close
+    from unnest(${ids}) as i(id)
+    cross join lateral (
+      select instrument_id, price_date, close
+      from ${pricesDaily}
+      where instrument_id = i.id and price_date <= ${asOf}
+      order by price_date desc
+      limit 2
+    ) p
+    order by p.instrument_id, p.price_date
+  `)) as unknown as Array<{ instrumentId: number; priceDate: IsoDate; close: string }>;
+
+  const series = new Map<number, Array<[IsoDate, Decimal]>>();
+  for (const r of rows) {
+    const list = series.get(Number(r.instrumentId)) ?? [];
+    list.push([r.priceDate, dec(r.close)]);
+    series.set(Number(r.instrumentId), list);
+  }
+  return new MapPriceLookup(series);
+}
+
 export async function loadFx(from: IsoDate, to: IsoDate): Promise<MapFxLookup> {
   const rows = await db
     .select()

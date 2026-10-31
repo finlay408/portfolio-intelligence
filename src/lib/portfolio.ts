@@ -44,7 +44,7 @@ import {
   type AttributionResult,
 } from './engine/attribution';
 import { groupWeights, summariseWeights, type WeightRow } from './engine/concentration';
-import { loadFx, loadLedger, loadPrices } from './engine/load';
+import { loadFx, loadLatestPrices, loadLedger } from './engine/load';
 import { computePositions } from './engine/positions';
 import { cashOn, toAttributionDays, type DailySnapshot } from './engine/snapshots';
 import { chainLink, dailyTwrSeries, maxDrawdown, type TwrPoint } from './engine/twr';
@@ -153,21 +153,22 @@ export async function getOverview(accountId?: number): Promise<OverviewData> {
     strict: false,
   });
 
-  const heldIds = [...new Set(ledger.trades.map((t) => t.instrumentId))];
-
-  // Load from inception, not from a rolling window. `priceOn` carries the last
-  // close forward, and it can only carry forward from what was loaded — so a
-  // fixed window silently drops any instrument whose most recent price is older
-  // than the window, and the position vanishes from the portfolio total.
+  // Only open positions need a price, and each needs only its latest close and
+  // the one before (for the day change). Loading the full history from
+  // inception for everything ever held — ~40k rows — was the slowest part of
+  // every page, so this asks the database for exactly those two rows per line.
+  // `priceOn`'s carry-forward still works: the two rows are the latest two
+  // whatever their dates, so a stale line keeps its last known price.
+  const openIds = derived.open.map((p) => p.instrumentId);
   const earliest =
     [...ledger.trades.map((t) => t.tradeDate), ...ledger.cashFlows.map((f) => f.flowDate)].sort()[0] ??
     addDays(asOf, -400);
 
   const [prices, fx, quoteRows] = await Promise.all([
-    loadPrices(heldIds, earliest, asOf),
+    loadLatestPrices(openIds, asOf),
     loadFx(earliest, asOf),
-    heldIds.length > 0
-      ? db.select().from(quotesLive).where(inArray(quotesLive.instrumentId, heldIds))
+    openIds.length > 0
+      ? db.select().from(quotesLive).where(inArray(quotesLive.instrumentId, openIds))
       : Promise.resolve([]),
   ]);
 
